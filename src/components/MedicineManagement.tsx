@@ -1,0 +1,862 @@
+import React, { useState, useEffect } from 'react';
+import { Plus, Edit, Trash2, Search, AlertTriangle, ChevronDown, X, RefreshCw, Calculator, CreditCard } from 'lucide-react';
+import { Medicine, PaymentMethod } from '../types';
+
+interface MedicineManagementProps {
+  medicines: Medicine[];
+  onAddMedicine: (medicine: Omit<Medicine, 'id' | 'createdAt'>) => void;
+  onEditMedicine: (id: string, medicine: Omit<Medicine, 'id' | 'createdAt'>) => void;
+  onDeleteMedicine: (id: string) => void;
+  onRefresh?: () => void;
+}
+
+const COMMON_MEDICINES = {
+  'Antibiotics': ['Amoxicillin', 'Azithromycin', 'Ciprofloxacin', 'Doxycycline', 'Erythromycin'],
+  'Analgesics': ['Paracetamol', 'Ibuprofen', 'Aspirin', 'Diclofenac', 'Tramadol'],
+  'Antacids': ['Omeprazole', 'Pantoprazole', 'Ranitidine', 'Domperidone', 'Sucralfate'],
+  'Antihistamines': ['Cetirizine', 'Loratadine', 'Chlorpheniramine', 'Fexofenadine', 'Diphenhydramine'],
+  'Antiseptics': ['Povidone Iodine', 'Hydrogen Peroxide', 'Chlorhexidine', 'Alcohol', 'Dettol'],
+  'Cardiovascular': ['Amlodipine', 'Atenolol', 'Lisinopril', 'Metoprolol', 'Simvastatin'],
+  'Dermatology': ['Hydrocortisone', 'Clotrimazole', 'Ketoconazole', 'Calamine', 'Betamethasone'],
+  'Diabetes': ['Metformin', 'Glimepiride', 'Insulin', 'Gliclazide', 'Pioglitazone'],
+  'Gastroenterology': ['Loperamide', 'Ondansetron', 'Metoclopramide', 'Lactulose', 'Mesalamine'],
+  'Neurology': ['Phenytoin', 'Carbamazepine', 'Gabapentin', 'Levodopa', 'Diazepam'],
+  'Ophthalmology': ['Tropicamide', 'Timolol', 'Ciprofloxacin Eye Drops', 'Prednisolone Eye Drops', 'Artificial Tears'],
+  'Orthopedics': ['Calcium', 'Vitamin D3', 'Glucosamine', 'Methyl Salicylate', 'Diclofenac Gel'],
+  'Pediatrics': ['Paracetamol Syrup', 'Amoxicillin Syrup', 'ORS', 'Zinc Syrup', 'Iron Syrup'],
+  'Respiratory': ['Salbutamol', 'Montelukast', 'Dextromethorphan', 'Guaifenesin', 'Prednisolone'],
+  'Vitamins & Supplements': ['Multivitamin', 'Vitamin B Complex', 'Vitamin C', 'Iron', 'Folic Acid'],
+  'Others': ['Custom Medicine']
+};
+
+const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
+  { value: 'cash', label: 'Cash' },
+  { value: 'credit', label: 'Credit' },
+  { value: 'upi', label: 'UPI' },
+  { value: 'card', label: 'Card' },
+  { value: 'bank_transfer', label: 'Bank Transfer' },
+];
+
+// Common HSN codes for medicines
+const COMMON_HSN_CODES = [
+  '30049099', // Other medicaments (general)
+  '30041000', // Penicillins
+  '30042000', // Streptomycins
+  '30043100', // Insulin
+  '30043200', // Corticosteroid hormones
+  '30044000', // Alkaloids
+  '30045000', // Vitamins
+  '30046000', // Provitamins and vitamins
+  '30049011', // Ayurvedic medicines
+  '30049012', // Unani medicines
+  '30049013', // Homoeopathic medicines
+  '30049014', // Siddha medicines
+  '30049015', // Bio-chemic medicines
+  '30049019', // Other traditional medicines
+];
+
+type MedicineFormInput = Omit<Medicine, 'id' | 'createdAt'>;
+
+export const MedicineManagement: React.FC<MedicineManagementProps> = ({
+  medicines,
+  onAddMedicine,
+  onEditMedicine,
+  onDeleteMedicine,
+  onRefresh,
+}) => {
+  const [showForm, setShowForm] = useState(false);
+  const [editingMedicine, setEditingMedicine] = useState<Medicine | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [availableCategories, setAvailableCategories] = useState<string[]>([]);
+  const [categorySearchTerm, setCategorySearchTerm] = useState('');
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
+  const [brandSearchTerm, setBrandSearchTerm] = useState('');
+  const [showBrandSuggestions, setShowBrandSuggestions] = useState(false);
+  const [brandSuggestions, setBrandSuggestions] = useState<string[]>([]);
+  const [showHsnSuggestions, setShowHsnSuggestions] = useState(false);
+
+  const [formData, setFormData] = useState<MedicineFormInput>({
+    name: '',
+    brand: '',
+    category: '',
+    batchNumber: '',
+    expiryDate: '',
+    quantity: 0,
+    minStockLevel: 10,
+    costPrice: 0,
+    costPriceGst: 0,
+    totalCostPrice: 0,
+    sellingPrice: 0,
+    sellingPriceGst: 0,
+    totalSellingPrice: 0,
+    supplier: '',
+    hsnCode: '',
+    paymentMethod: 'cash' as PaymentMethod,
+  });
+
+  // Calculate total prices when base prices or GST percentages change
+  useEffect(() => {
+    const costGstAmount = (formData.costPrice * formData.costPriceGst) / 100;
+    const sellingGstAmount = (formData.sellingPrice * formData.sellingPriceGst) / 100;
+    
+    setFormData(prev => ({
+      ...prev,
+      totalCostPrice: prev.costPrice + costGstAmount,
+      totalSellingPrice: prev.sellingPrice + sellingGstAmount,
+    }));
+  }, [formData.costPrice, formData.costPriceGst, formData.sellingPrice, formData.sellingPriceGst]);
+
+  useEffect(() => {
+    const savedSettings = localStorage.getItem('clinic_settings');
+    if (savedSettings) {
+      const settings = JSON.parse(savedSettings);
+      if (settings.categories) {
+        setAvailableCategories(settings.categories);
+      } else {
+        setAvailableCategories(Object.keys(COMMON_MEDICINES));
+      }
+    } else {
+      setAvailableCategories(Object.keys(COMMON_MEDICINES));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (brandSearchTerm.length > 0) {
+      const uniqueBrands = [...new Set(medicines.map(m => m.brand))];
+      const filtered = uniqueBrands.filter(brand =>
+        brand.toLowerCase().includes(brandSearchTerm.toLowerCase())
+      );
+      setBrandSuggestions(filtered.slice(0, 5));
+      setShowBrandSuggestions(filtered.length > 0);
+    } else {
+      setShowBrandSuggestions(false);
+      setBrandSuggestions([]);
+    }
+  }, [brandSearchTerm, medicines]);
+
+  const filteredMedicines = medicines.filter(medicine =>
+    medicine.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    medicine.brand.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    medicine.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    medicine.hsnCode.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const filteredCategories = availableCategories.filter(category =>
+    category.toLowerCase().includes(categorySearchTerm.toLowerCase())
+  );
+
+  const filteredHsnCodes = COMMON_HSN_CODES.filter(code =>
+    code.includes(formData.hsnCode)
+  );
+
+  const resetForm = () => {
+    setFormData({
+      name: '',
+      brand: '',
+      category: '',
+      batchNumber: '',
+      expiryDate: '',
+      quantity: 0,
+      minStockLevel: 10,
+      costPrice: 0,
+      costPriceGst: 0,
+      totalCostPrice: 0,
+      sellingPrice: 0,
+      sellingPriceGst: 0,
+      totalSellingPrice: 0,
+      supplier: '',
+      hsnCode: '',
+      paymentMethod: 'cash',
+    });
+    setEditingMedicine(null);
+    setShowForm(false);
+    setCategorySearchTerm('');
+    setBrandSearchTerm('');
+    setShowCategoryDropdown(false);
+    setShowBrandSuggestions(false);
+    setShowHsnSuggestions(false);
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (editingMedicine) {
+      onEditMedicine(editingMedicine.id, formData as MedicineFormInput);
+    } else {
+      onAddMedicine(formData as MedicineFormInput);
+    }
+    resetForm();
+  };
+
+  const handleEdit = (medicine: Medicine) => {
+    setFormData({
+      name: medicine.name,
+      brand: medicine.brand,
+      category: medicine.category,
+      batchNumber: medicine.batchNumber,
+      expiryDate: medicine.expiryDate,
+      quantity: medicine.quantity,
+      minStockLevel: medicine.minStockLevel,
+      costPrice: medicine.costPrice,
+      costPriceGst: medicine.costPriceGst || 0,
+      totalCostPrice: medicine.totalCostPrice || medicine.costPrice,
+      sellingPrice: medicine.sellingPrice,
+      sellingPriceGst: medicine.sellingPriceGst || 0,
+      totalSellingPrice: medicine.totalSellingPrice || medicine.sellingPrice,
+      supplier: medicine.supplier,
+      hsnCode: medicine.hsnCode || '',
+      paymentMethod: medicine.paymentMethod || 'cash',
+    });
+    setCategorySearchTerm(medicine.category);
+    setBrandSearchTerm(medicine.brand);
+    setEditingMedicine(medicine);
+    setShowForm(true);
+  };
+
+  const handleCategoryChange = (category: string) => {
+    setFormData({ ...formData, category, name: '' });
+    setCategorySearchTerm(category);
+    setShowCategoryDropdown(false);
+  };
+
+  const handleBrandChange = (brand: string) => {
+    setFormData({ ...formData, brand });
+    setBrandSearchTerm(brand);
+    setShowBrandSuggestions(false);
+  };
+
+  const handleHsnCodeChange = (hsnCode: string) => {
+    setFormData({ ...formData, hsnCode });
+    setShowHsnSuggestions(false);
+  };
+
+  const handleMedicineNameChange = (name: string) => {
+    setFormData({ ...formData, name });
+  };
+
+  const isExpired = (expiryDate: string) => new Date(expiryDate) < new Date();
+  const isExpiringSoon = (expiryDate: string) => {
+    const expiry = new Date(expiryDate);
+    const oneMonth = new Date();
+    oneMonth.setMonth(oneMonth.getMonth() + 1);
+    return expiry <= oneMonth && expiry >= new Date();
+  };
+
+  const handleRefresh = () => {
+    if (onRefresh) {
+      onRefresh();
+    }
+    window.location.reload();
+  };
+
+  const getPaymentMethodColor = (method: PaymentMethod) => {
+    const colors = {
+      cash: 'bg-green-100 text-green-800',
+      credit: 'bg-blue-100 text-blue-800',
+      upi: 'bg-purple-100 text-purple-800',
+      card: 'bg-orange-100 text-orange-800',
+      bank_transfer: 'bg-gray-100 text-gray-800',
+    };
+    return colors[method] || 'bg-gray-100 text-gray-800';
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex justify-between items-center">
+        <div className="flex items-center space-x-4">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+            <input
+              type="text"
+              placeholder="Search medicines, HSN code..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+          <button
+            onClick={handleRefresh}
+            className="flex items-center space-x-2 px-3 py-2 text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+          >
+            <RefreshCw className="h-4 w-4" />
+            <span>Refresh</span>
+          </button>
+        </div>
+        <button
+          onClick={() => setShowForm(true)}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center space-x-2"
+        >
+          <Plus className="h-4 w-4" />
+          <span>Add Medicine</span>
+        </button>
+      </div>
+
+      {/* Medicine Form Modal */}
+      {showForm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-5xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold">
+                {editingMedicine ? 'Edit Medicine' : 'Add New Medicine'}
+              </h3>
+              <button
+                onClick={resetForm}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {/* Basic Information */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {/* Category with Search */}
+                <div className="relative">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Category *
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={categorySearchTerm}
+                      onChange={(e) => {
+                        setCategorySearchTerm(e.target.value);
+                        setShowCategoryDropdown(true);
+                      }}
+                      onFocus={() => setShowCategoryDropdown(true)}
+                      placeholder="Search or select category..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 pr-10"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowCategoryDropdown(!showCategoryDropdown)}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                    </button>
+                    
+                    {/* Category Dropdown */}
+                    {showCategoryDropdown && (
+                      <div className="absolute z-20 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {filteredCategories.length > 0 ? (
+                          filteredCategories.map((category) => (
+                            <button
+                              key={category}
+                              type="button"
+                              onClick={() => handleCategoryChange(category)}
+                              className="w-full text-left px-3 py-2 hover:bg-blue-50 hover:text-blue-700 border-b border-gray-100 last:border-b-0"
+                            >
+                              {category}
+                            </button>
+                          ))
+                        ) : (
+                          <div className="px-3 py-2 text-gray-500 text-sm">
+                            No categories found
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Medicine Name */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Medicine Name *
+                  </label>
+                  {formData.category && COMMON_MEDICINES[formData.category as keyof typeof COMMON_MEDICINES] ? (
+                    <div className="relative">
+                      <select
+                        required
+                        value={formData.name}
+                        onChange={(e) => handleMedicineNameChange(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
+                      >
+                        <option value="">Select Medicine</option>
+                        {COMMON_MEDICINES[formData.category as keyof typeof COMMON_MEDICINES].map(medicine => (
+                          <option key={medicine} value={medicine}>{medicine}</option>
+                        ))}
+                      </select>
+                      <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4 pointer-events-none" />
+                    </div>
+                  ) : (
+                    <input
+                      type="text"
+                      required
+                      value={formData.name}
+                      onChange={(e) => handleMedicineNameChange(e.target.value)}
+                      placeholder={formData.category ? "Enter custom medicine name" : "Select category first"}
+                      disabled={!formData.category}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+                    />
+                  )}
+                </div>
+                
+                {/* Brand with Autocomplete */}
+                <div className="relative">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Brand *
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      required
+                      value={brandSearchTerm}
+                      onChange={(e) => {
+                        setBrandSearchTerm(e.target.value);
+                        setFormData({ ...formData, brand: e.target.value });
+                      }}
+                      onFocus={() => {
+                        if (brandSearchTerm.length > 0) {
+                          setShowBrandSuggestions(true);
+                        }
+                      }}
+                      placeholder="Type brand name..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                    
+                    {/* Brand Suggestions */}
+                    {showBrandSuggestions && brandSuggestions.length > 0 && (
+                      <div className="absolute z-20 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-32 overflow-y-auto">
+                        {brandSuggestions.map((brand, index) => (
+                          <button
+                            key={index}
+                            type="button"
+                            onClick={() => handleBrandChange(brand)}
+                            className="w-full text-left px-3 py-2 hover:bg-blue-50 hover:text-blue-700 border-b border-gray-100 last:border-b-0 flex items-center justify-between"
+                          >
+                            <span>{brand}</span>
+                            <span className="text-xs text-gray-500">
+                              {medicines.filter(m => m.brand === brand).length} medicines
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                
+                {/* HSN Code */}
+                <div className="relative">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    HSN Code *
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      required
+                      value={formData.hsnCode}
+                      onChange={(e) => {
+                        setFormData({ ...formData, hsnCode: e.target.value });
+                        setShowHsnSuggestions(e.target.value.length > 0);
+                      }}
+                      onFocus={() => {
+                        if (formData.hsnCode.length > 0) {
+                          setShowHsnSuggestions(true);
+                        }
+                      }}
+                      placeholder="Enter HSN code..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      maxLength={10}
+                    />
+                    
+                    {/* HSN Code Suggestions */}
+                    {showHsnSuggestions && filteredHsnCodes.length > 0 && (
+                      <div className="absolute z-20 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                        {filteredHsnCodes.map((code, index) => (
+                          <button
+                            key={index}
+                            type="button"
+                            onClick={() => handleHsnCodeChange(code)}
+                            className="w-full text-left px-3 py-2 hover:bg-blue-50 hover:text-blue-700 border-b border-gray-100 last:border-b-0"
+                          >
+                            <div className="font-mono text-sm">{code}</div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    8-digit Harmonized System of Nomenclature code
+                  </p>
+                </div>
+
+                {/* Payment Method */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Payment Method *
+                  </label>
+                  <div className="relative">
+                    <select
+                      required
+                      value={formData.paymentMethod}
+                      onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value as PaymentMethod })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
+                    >
+                      {PAYMENT_METHODS.map(method => (
+                        <option key={method.value} value={method.value}>{method.label}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4 pointer-events-none" />
+                  </div>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Batch Number *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.batchNumber}
+                    onChange={(e) => setFormData({ ...formData, batchNumber: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Expiry Date *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={formData.expiryDate}
+                    onChange={(e) => setFormData({ ...formData, expiryDate: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Quantity *
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    value={formData.quantity}
+                    onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value) })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Min Stock Level *
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    value={formData.minStockLevel}
+                    onChange={(e) => setFormData({ ...formData, minStockLevel: parseInt(e.target.value) })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Supplier *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.supplier}
+                    onChange={(e) => setFormData({ ...formData, supplier: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              {/* Pricing Section */}
+              <div className="border-t pt-6">
+                <div className="flex items-center mb-4">
+                  <Calculator className="h-5 w-5 text-blue-600 mr-2" />
+                  <h4 className="text-lg font-medium text-gray-900">Pricing Information</h4>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Cost Price Section */}
+                  <div className="bg-gray-50 p-4 rounded-lg space-y-4">
+                    <h5 className="font-medium text-gray-900">Cost Price Details</h5>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Base Cost Price *
+                      </label>
+                      <input
+                        type="number"
+                        required
+                        min="0"
+                        step="0.01"
+                        value={formData.costPrice}
+                        onChange={(e) => setFormData({ ...formData, costPrice: parseFloat(e.target.value) || 0 })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        GST % on Cost Price
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.01"
+                        value={formData.costPriceGst}
+                        onChange={(e) => setFormData({ ...formData, costPriceGst: parseFloat(e.target.value) || 0 })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Total Cost Price (incl. GST)
+                      </label>
+                      <div className="flex items-center bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                        <span className="text-green-700 font-medium">
+                          ₹{formData.totalCostPrice.toFixed(2)}
+                        </span>
+                        <span className="ml-2 text-xs text-green-600">
+                          (GST: ₹{((formData.costPrice * formData.costPriceGst) / 100).toFixed(2)})
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Selling Price Section */}
+                  <div className="bg-blue-50 p-4 rounded-lg space-y-4">
+                    <h5 className="font-medium text-gray-900">Selling Price Details</h5>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Base Selling Price *
+                      </label>
+                      <input
+                        type="number"
+                        required
+                        min="0"
+                        step="0.01"
+                        value={formData.sellingPrice}
+                        onChange={(e) => setFormData({ ...formData, sellingPrice: parseFloat(e.target.value) || 0 })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        GST % on Selling Price
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        step="0.01"
+                        value={formData.sellingPriceGst}
+                        onChange={(e) => setFormData({ ...formData, sellingPriceGst: parseFloat(e.target.value) || 0 })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Total Selling Price (incl. GST)
+                      </label>
+                      <div className="flex items-center bg-blue-100 border border-blue-200 rounded-lg px-3 py-2">
+                        <span className="text-blue-700 font-medium">
+                          ₹{formData.totalSellingPrice.toFixed(2)}
+                        </span>
+                        <span className="ml-2 text-xs text-blue-600">
+                          (GST: ₹{((formData.sellingPrice * formData.sellingPriceGst) / 100).toFixed(2)})
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Profit Margin Display */}
+                {formData.totalSellingPrice > 0 && formData.totalCostPrice > 0 && (
+                  <div className="mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <span className="text-purple-700 font-medium">Profit Margin:</span>
+                      <div className="text-right">
+                        <span className="text-purple-900 font-semibold">
+                          ₹{(formData.totalSellingPrice - formData.totalCostPrice).toFixed(2)}
+                        </span>
+                        <span className="ml-2 text-sm text-purple-600">
+                          ({(((formData.totalSellingPrice - formData.totalCostPrice) / formData.totalCostPrice) * 100).toFixed(1)}%)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-4">
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="px-4 py-2 text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  {editingMedicine ? 'Update' : 'Add'} Medicine
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Click outside handlers */}
+      {(showCategoryDropdown || showBrandSuggestions || showHsnSuggestions) && (
+        <div 
+          className="fixed inset-0 z-10"
+          onClick={() => {
+            setShowCategoryDropdown(false);
+            setShowBrandSuggestions(false);
+            setShowHsnSuggestions(false);
+          }}
+        />
+      )}
+
+      {/* Medicines List */}
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Medicine
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Category
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  HSN Code
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Payment Method
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Stock
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Expiry
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Cost Price
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Selling Price
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {filteredMedicines.map((medicine) => (
+                <tr key={medicine.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div>
+                      <div className="flex items-center">
+                        <div className="text-sm font-medium text-gray-900">
+                          {medicine.name}
+                        </div>
+                        {(isExpired(medicine.expiryDate) || isExpiringSoon(medicine.expiryDate) || medicine.quantity <= medicine.minStockLevel) && (
+                          <AlertTriangle className="ml-2 h-4 w-4 text-yellow-500" />
+                        )}
+                      </div>
+                      <div className="text-sm text-gray-500">{medicine.brand}</div>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                      {medicine.category}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className="text-sm font-mono text-gray-900">{medicine.hsnCode}</span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getPaymentMethodColor(medicine.paymentMethod)}`}>
+                      <CreditCard className="h-3 w-3 mr-1" />
+                      {PAYMENT_METHODS.find(p => p.value === medicine.paymentMethod)?.label}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`text-sm font-medium ${
+                      medicine.quantity <= medicine.minStockLevel
+                        ? medicine.quantity === 0 ? 'text-red-600' : 'text-orange-600'
+                        : 'text-green-600'
+                    }`}>
+                      {medicine.quantity}
+                    </span>
+                    <div className="text-xs text-gray-500">Min: {medicine.minStockLevel}</div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`text-sm ${
+                      isExpired(medicine.expiryDate)
+                        ? 'text-red-600 font-medium'
+                        : isExpiringSoon(medicine.expiryDate)
+                        ? 'text-orange-600 font-medium'
+                        : 'text-gray-900'
+                    }`}>
+                      {new Date(medicine.expiryDate).toLocaleDateString()}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm text-gray-900">
+                      <div className="font-medium">₹{(medicine.totalCostPrice ?? medicine.costPrice ?? 0).toFixed(2)}</div>
+                      {(medicine.costPriceGst ?? 0) > 0 && (
+                        <div className="text-xs text-gray-500">
+                          Base: ₹{(medicine.costPrice ?? 0).toFixed(2)} + GST({medicine.costPriceGst}%)
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm text-gray-900">
+                      <div className="font-medium">₹{(medicine.totalSellingPrice ?? medicine.sellingPrice ?? 0).toFixed(2)}</div>
+                      {(medicine.sellingPriceGst ?? 0) > 0 && (
+                        <div className="text-xs text-gray-500">
+                          Base: ₹{(medicine.sellingPrice ?? 0).toFixed(2)} + GST({medicine.sellingPriceGst}%)
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+                    <button
+                      onClick={() => handleEdit(medicine)}
+                      className="text-blue-600 hover:text-blue-900"
+                    >
+                      <Edit className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => onDeleteMedicine(medicine.id)}
+                      className="text-red-600 hover:text-red-900"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {filteredMedicines.length === 0 && (
+          <div className="text-center py-8 text-gray-500">
+            No medicines found
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
