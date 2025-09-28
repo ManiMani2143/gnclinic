@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Receipt, Trash2, ShoppingCart, Printer, Download, Stethoscope, CreditCard as Edit2, User as IdCard, Phone, X, Minus, MessageSquare, CheckCircle, AlertCircle, Settings, Package, Pill } from 'lucide-react';
+import { Plus, Search, Receipt, Trash2, ShoppingCart, Printer, Download, Stethoscope, CreditCard as Edit2, User as IdCard, Phone, X, Minus, MessageSquare, CheckCircle, AlertCircle, Settings, Package } from 'lucide-react';
 import { Medicine, Customer, Sale, SaleItem, SettingsData, ConsultationService } from '../types';
 import { smsService, BillSMSData } from '../utils/sms';
 
@@ -9,11 +9,11 @@ interface SelectedService {
   customPrice?: number;
 }
 
-// Enhanced SaleItem interface to include strip/tablet tracking
-interface EnhancedSaleItem extends SaleItem {
-  saleType?: 'strip' | 'tablet';
-  tabletsPerStrip?: number;
-  totalTablets?: number;
+interface CartItem extends SaleItem {
+  strips: number;
+  tabletsPerStrip: number;
+  totalTablets: number;
+  extraTablets?: number;
 }
 
 interface SalesManagementProps {
@@ -42,7 +42,7 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
   const [medicineSearchTerm, setMedicineSearchTerm] = useState('');
   const [patientSearchTerm, setPatientSearchTerm] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [cartItems, setCartItems] = useState<EnhancedSaleItem[]>([]);
+  const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [discount, setDiscount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'upi'>('cash');
   const [customerReentryAlert, setCustomerReentryAlert] = useState<string | null>(null);
@@ -50,10 +50,6 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
   // Enhanced service selection state
   const [selectedServices, setSelectedServices] = useState<SelectedService[]>([]);
   const [showServiceCustomization, setShowServiceCustomization] = useState(false);
-  
-  // Medicine sale type state
-  const [selectedSaleType, setSelectedSaleType] = useState<'strip' | 'tablet'>('strip');
-  const [tabletQuantity, setTabletQuantity] = useState(1);
   
   const [smsStatus, setSmsStatus] = useState<{ show: boolean; success: boolean; message: string }>({
     show: false,
@@ -63,33 +59,41 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
   const [sendingSMS, setSendingSMS] = useState(false);
   const [editMode, setEditMode] = useState(false);
 
+  // Medicine input states for each medicine
+  const [medicineInputs, setMedicineInputs] = useState<{ [key: string]: { strips: string; extraTablets: string } }>({});
+
+  // Initialize medicine inputs
+  useEffect(() => {
+    const initialInputs: { [key: string]: { strips: string; extraTablets: string } } = {};
+    medicines.forEach(medicine => {
+      initialInputs[medicine.id] = { strips: '', extraTablets: '' };
+    });
+    setMedicineInputs(initialInputs);
+  }, [medicines]);
+
   // Real-time medicine quantities considering cart items
-  const getAvailableQuantity = (medicineId: string): { strips: number; tablets: number } => {
+  const getAvailableQuantity = (medicineId: string): number => {
     const medicine = medicines.find(m => m.id === medicineId);
-    if (!medicine) return { strips: 0, tablets: 0 };
+    if (!medicine) return 0;
     
     const cartItem = cartItems.find(item => item.medicineId === medicineId);
-    let reservedStrips = 0;
-    let reservedTablets = 0;
+    const reservedQuantity = cartItem ? cartItem.totalTablets : 0;
     
-    if (cartItem) {
-      if (cartItem.saleType === 'strip') {
-        reservedStrips = cartItem.quantity;
-        reservedTablets = cartItem.quantity * (cartItem.tabletsPerStrip || 1);
-      } else {
-        reservedTablets = cartItem.quantity;
-        reservedStrips = Math.floor(reservedTablets / (cartItem.tabletsPerStrip || 1));
-      }
-    }
-    
-    const totalTablets = medicine.quantity * (medicine.tabletsPerStrip || 1);
-    const availableTablets = Math.max(0, totalTablets - reservedTablets);
-    const availableStrips = Math.floor(availableTablets / (medicine.tabletsPerStrip || 1));
-    
-    return {
-      strips: availableStrips,
-      tablets: availableTablets
-    };
+    return Math.max(0, medicine.quantity - reservedQuantity);
+  };
+
+  const getAvailableStrips = (medicineId: string): number => {
+    const availableQty = getAvailableQuantity(medicineId);
+    const medicine = medicines.find(m => m.id === medicineId);
+    const tabletsPerStrip = medicine?.tabletsPerStrip || 1;
+    return Math.floor(availableQty / tabletsPerStrip);
+  };
+
+  const getAvailableExtraTablets = (medicineId: string): number => {
+    const availableQty = getAvailableQuantity(medicineId);
+    const medicine = medicines.find(m => m.id === medicineId);
+    const tabletsPerStrip = medicine?.tabletsPerStrip || 1;
+    return availableQty % tabletsPerStrip;
   };
 
   const filteredSales = sales.filter(sale =>
@@ -201,45 +205,36 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     return selectedServices.find(s => s.service.id === serviceId);
   };
 
-  // Enhanced add to cart with strip/tablet support
-  const addToCart = (medicine: Medicine, quantity: number, saleType: 'strip' | 'tablet' = 'strip') => {
-    const available = getAvailableQuantity(medicine.id);
+  const addToCart = (medicine: Medicine, strips: number, extraTablets: number) => {
     const tabletsPerStrip = medicine.tabletsPerStrip || 1;
+    const totalTablets = (strips * tabletsPerStrip) + extraTablets;
+    const availableQty = getAvailableQuantity(medicine.id);
     
-    let finalQuantity = quantity;
-    let finalSaleType = saleType;
-    let totalTablets = 0;
+    if (totalTablets <= 0 || totalTablets > availableQty) return;
     
-    if (saleType === 'strip') {
-      if (quantity > available.strips) return;
-      totalTablets = quantity * tabletsPerStrip;
-    } else {
-      if (quantity > available.tablets) return;
-      finalQuantity = quantity;
-      totalTablets = quantity;
-      // If selling whole strips, convert to strips
-      if (quantity % tabletsPerStrip === 0) {
-        finalQuantity = quantity / tabletsPerStrip;
-        finalSaleType = 'strip';
-      }
-    }
-    
-    const existingItem = cartItems.find(item => item.medicineId === medicine.id && item.saleType === finalSaleType);
+    const existingItem = cartItems.find(item => item.medicineId === medicine.id);
+    const unitPricePerTablet = (medicine.totalSellingPrice ?? medicine.sellingPrice) / tabletsPerStrip;
     
     if (existingItem) {
-      const newQuantity = existingItem.quantity + finalQuantity;
-      const newTotalTablets = existingItem.totalTablets! + totalTablets;
+      const newTotalTablets = existingItem.totalTablets + totalTablets;
+      if (newTotalTablets > medicine.quantity) return;
       
-      if ((finalSaleType === 'strip' && newQuantity > available.strips) || 
-          (finalSaleType === 'tablet' && newTotalTablets > available.tablets)) return;
+      const newStrips = existingItem.strips + strips;
+      const newExtraTablets = (existingItem.extraTablets || 0) + extraTablets;
+      
+      // Adjust if extra tablets make a complete strip
+      const adjustedStrips = newStrips + Math.floor(newExtraTablets / tabletsPerStrip);
+      const adjustedExtraTablets = newExtraTablets % tabletsPerStrip;
       
       setCartItems(cartItems.map(item =>
-        item.medicineId === medicine.id && item.saleType === finalSaleType
+        item.medicineId === medicine.id
           ? { 
               ...item, 
-              quantity: newQuantity,
+              strips: adjustedStrips,
+              extraTablets: adjustedExtraTablets,
               totalTablets: newTotalTablets,
-              totalPrice: calculateItemPrice(medicine, newQuantity, finalSaleType)
+              quantity: newTotalTablets,
+              totalPrice: newTotalTablets * unitPricePerTablet
             }
           : item
       ));
@@ -247,87 +242,62 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
       setCartItems([...cartItems, {
         medicineId: medicine.id,
         medicineName: medicine.name,
-        quantity: finalQuantity,
-        unitPrice: calculateUnitPrice(medicine, finalSaleType),
-        totalPrice: calculateItemPrice(medicine, finalQuantity, finalSaleType),
-        saleType: finalSaleType,
+        quantity: totalTablets,
+        strips: strips,
         tabletsPerStrip: tabletsPerStrip,
-        totalTablets: totalTablets
+        totalTablets: totalTablets,
+        extraTablets: extraTablets,
+        unitPrice: unitPricePerTablet,
+        totalPrice: totalTablets * unitPricePerTablet,
       }]);
     }
     
-    // Reset tablet quantity after adding
-    if (saleType === 'tablet') {
-      setTabletQuantity(1);
-    }
+    // Clear input fields
+    setMedicineInputs(prev => ({
+      ...prev,
+      [medicine.id]: { strips: '', extraTablets: '' }
+    }));
   };
 
-  const calculateUnitPrice = (medicine: Medicine, saleType: 'strip' | 'tablet'): number => {
-    const basePrice = medicine.totalSellingPrice ?? medicine.sellingPrice;
-    if (saleType === 'strip') {
-      return basePrice;
-    } else {
-      // Calculate price per tablet
-      const tabletsPerStrip = medicine.tabletsPerStrip || 1;
-      return basePrice / tabletsPerStrip;
-    }
+  const removeFromCart = (medicineId: string) => {
+    setCartItems(cartItems.filter(item => item.medicineId !== medicineId));
   };
 
-  const calculateItemPrice = (medicine: Medicine, quantity: number, saleType: 'strip' | 'tablet'): number => {
-    const unitPrice = calculateUnitPrice(medicine, saleType);
-    return quantity * unitPrice;
-  };
-
-  const removeFromCart = (medicineId: string, saleType?: 'strip' | 'tablet') => {
-    if (saleType) {
-      setCartItems(cartItems.filter(item => !(item.medicineId === medicineId && item.saleType === saleType)));
-    } else {
-      setCartItems(cartItems.filter(item => item.medicineId !== medicineId));
-    }
-  };
-
-  const updateCartQuantity = (medicineId: string, quantity: number, saleType: 'strip' | 'tablet') => {
-    if (quantity <= 0) {
-      removeFromCart(medicineId, saleType);
+  const updateCartQuantity = (medicineId: string, totalTablets: number) => {
+    if (totalTablets <= 0) {
+      removeFromCart(medicineId);
       return;
     }
     
     const medicine = medicines.find(m => m.id === medicineId);
-    if (!medicine) return;
+    if (!medicine || totalTablets > medicine.quantity) return;
     
-    const available = getAvailableQuantity(medicineId);
-    const cartItem = cartItems.find(item => item.medicineId === medicineId && item.saleType === saleType);
-    
-    if (!cartItem) return;
-    
-    let newQuantity = quantity;
-    let newTotalTablets = 0;
-    
-    if (saleType === 'strip') {
-      if (quantity > available.strips) return;
-      newTotalTablets = quantity * (cartItem.tabletsPerStrip || 1);
-    } else {
-      if (quantity > available.tablets) return;
-      newQuantity = quantity;
-      newTotalTablets = quantity;
-    }
+    const tabletsPerStrip = medicine.tabletsPerStrip || 1;
+    const strips = Math.floor(totalTablets / tabletsPerStrip);
+    const extraTablets = totalTablets % tabletsPerStrip;
     
     setCartItems(cartItems.map(item =>
-      item.medicineId === medicineId && item.saleType === saleType
+      item.medicineId === medicineId
         ? { 
             ...item, 
-            quantity: newQuantity,
-            totalTablets: newTotalTablets,
-            totalPrice: calculateItemPrice(medicine, newQuantity, saleType)
+            strips,
+            extraTablets,
+            quantity: totalTablets,
+            totalTablets: totalTablets,
+            totalPrice: totalTablets * item.unitPrice 
           }
         : item
     ));
   };
 
-  const updateCartItemPrice = (medicineId: string, unitPrice: number, saleType: 'strip' | 'tablet') => {
+  const updateCartItemPrice = (medicineId: string, unitPrice: number) => {
     setCartItems(cartItems.map(item =>
-      item.medicineId === medicineId && item.saleType === saleType
-        ? { ...item, unitPrice, totalPrice: item.quantity * unitPrice }
+      item.medicineId === medicineId
+        ? { 
+            ...item, 
+            unitPrice, 
+            totalPrice: item.totalTablets * unitPrice 
+          }
         : item
     ));
   };
@@ -370,16 +340,11 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
 
     onAddSale(newSale);
     
-    // Update medicine stock
+    // Update medicine stock based on total tablets consumed
     cartItems.forEach(item => {
       const currentMedicine = medicines.find(m => m.id === item.medicineId);
       if (currentMedicine) {
-        const tabletsSold = item.totalTablets || (item.quantity * (item.tabletsPerStrip || 1));
-        const totalTablets = currentMedicine.quantity * (currentMedicine.tabletsPerStrip || 1);
-        const newTotalTablets = totalTablets - tabletsSold;
-        const newStripQuantity = Math.ceil(newTotalTablets / (currentMedicine.tabletsPerStrip || 1));
-        
-        onUpdateMedicineStock(item.medicineId, newStripQuantity);
+        onUpdateMedicineStock(item.medicineId, currentMedicine.quantity - item.totalTablets);
       }
     });
 
@@ -446,8 +411,13 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     setShowForm(false);
     setShowServiceCustomization(false);
     setCustomerReentryAlert(null);
-    setSelectedSaleType('strip');
-    setTabletQuantity(1);
+    
+    // Reset medicine inputs
+    const resetInputs: { [key: string]: { strips: string; extraTablets: string } } = {};
+    medicines.forEach(medicine => {
+      resetInputs[medicine.id] = { strips: '', extraTablets: '' };
+    });
+    setMedicineInputs(resetInputs);
     
     // Reset to default services
     if (settings.consultationServices && settings.consultationServices.length > 0) {
@@ -470,11 +440,131 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
   };
 
   const printBill = () => {
-    // ... (same as before)
+    if (!currentBill) return;
+
+    // Create a new window for printing
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    // Generate bill content
+    const billContent = generatePrintableBillContent(currentBill);
+    
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Bill ${currentBill.id.substring(0, 8)}</title>
+          <style>
+            body {
+              font-family: 'Arial', sans-serif;
+              margin: 0;
+              padding: 20px;
+              font-size: 12px;
+              line-height: 1.4;
+            }
+            .bill-container {
+              max-width: 80mm;
+              margin: 0 auto;
+            }
+            .header {
+              text-align: center;
+              border-bottom: 2px solid #000;
+              padding-bottom: 10px;
+              margin-bottom: 10px;
+            }
+            .clinic-name {
+              font-size: 16px;
+              font-weight: bold;
+              margin-bottom: 5px;
+            }
+            .clinic-details {
+              font-size: 10px;
+              margin-bottom: 5px;
+            }
+            .bill-info {
+              display: flex;
+              justify-content: space-between;
+              margin-bottom: 10px;
+            }
+            .patient-info {
+              margin-bottom: 10px;
+            }
+            .items-table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-bottom: 10px;
+            }
+            .items-table th,
+            .items-table td {
+              border: 1px solid #000;
+              padding: 4px;
+              text-align: left;
+            }
+            .items-table th {
+              background-color: #f0f0f0;
+              font-weight: bold;
+            }
+            .summary {
+              border-top: 2px solid #000;
+              padding-top: 10px;
+              margin-top: 10px;
+            }
+            .summary-row {
+              display: flex;
+              justify-content: space-between;
+              margin-bottom: 3px;
+            }
+            .total-row {
+              font-weight: bold;
+              border-top: 1px solid #000;
+              padding-top: 5px;
+              margin-top: 5px;
+            }
+            .footer {
+              text-align: center;
+              margin-top: 15px;
+              font-size: 10px;
+              border-top: 1px solid #000;
+              padding-top: 10px;
+            }
+            @media print {
+              body { margin: 0; }
+              .bill-container { max-width: 100%; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="bill-container">
+            ${billContent}
+          </div>
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() {
+                window.close();
+              }, 100);
+            }
+          </script>
+        </body>
+      </html>
+    `);
+    
+    printWindow.document.close();
   };
 
   const downloadBill = () => {
-    // ... (same as before)
+    if (!currentBill) return;
+    
+    const billContent = generateBillContent(currentBill);
+    const blob = new Blob([billContent], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Bill_${currentBill.patientId}_${new Date(currentBill.createdAt).toLocaleDateString().replace(/\//g, '-')}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const handleEditBill = (sale: Sale) => {
@@ -484,11 +574,234 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
   };
 
   const generatePrintableBillContent = (sale: Sale): string => {
-    // ... (same as before, but enhanced to show strip/tablet info)
+    const customer = customers.find(c => c.id === sale.customerId);
+    const medicineItems = sale.items.filter(item => !item.medicineId.startsWith('service-') && item.medicineId !== 'consultation') as CartItem[];
+    const serviceItems = sale.items.filter(item => item.medicineId.startsWith('service-') || item.medicineId === 'consultation');
+    
+    return `
+      <div class="header">
+        <div class="clinic-name">${settings.clinicName}</div>
+        <div class="clinic-details">${settings.doctorName}</div>
+        <div class="clinic-details">${settings.clinicAddress}</div>
+        <div class="clinic-details">Phone: ${settings.clinicPhone}</div>
+      </div>
+      
+      <div class="bill-info">
+        <div>
+          <strong>Bill No:</strong> ${sale.id.substring(0, 8)}<br>
+          <strong>Patient ID:</strong> ${sale.patientId}
+        </div>
+        <div>
+          <strong>Date:</strong> ${new Date(sale.createdAt).toLocaleDateString()}<br>
+          <strong>Time:</strong> ${new Date(sale.createdAt).toLocaleTimeString()}
+        </div>
+      </div>
+      
+      <div class="patient-info">
+        <strong>Patient:</strong> ${sale.customerName}<br>
+        <strong>Phone:</strong> ${customer?.phone || 'N/A'}
+      </div>
+      
+      <table class="items-table">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Qty</th>
+            <th>Rate</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${serviceItems.map(item => `
+            <tr>
+              <td>${item.medicineName}</td>
+              <td>${item.quantity}</td>
+              <td>₹${item.unitPrice.toFixed(2)}</td>
+              <td>₹${item.totalPrice.toFixed(2)}</td>
+            </tr>
+          `).join('')}
+          ${medicineItems.map(item => {
+            const totalTablets = item.totalTablets || item.quantity;
+            const strips = item.strips || 0;
+            const extraTablets = item.extraTablets || 0;
+            let quantityDisplay = `${totalTablets} tabs`;
+            
+            if (strips > 0 && extraTablets > 0) {
+              quantityDisplay = `${strips} strips + ${extraTablets} tabs`;
+            } else if (strips > 0) {
+              quantityDisplay = `${strips} strips`;
+            }
+            
+            return `
+            <tr>
+              <td>${item.medicineName}</td>
+              <td>${quantityDisplay}</td>
+              <td>₹${item.unitPrice.toFixed(2)}/tab</td>
+              <td>₹${item.totalPrice.toFixed(2)}</td>
+            </tr>
+          `}).join('')}
+        </tbody>
+      </table>
+      
+      <div class="summary">
+        <div class="summary-row">
+          <span>Subtotal:</span>
+          <span>₹${sale.totalAmount.toFixed(2)}</span>
+        </div>
+        <div class="summary-row">
+          <span>Discount:</span>
+          <span>₹${sale.discount.toFixed(2)}</span>
+        </div>
+        <div class="summary-row total-row">
+          <span>Total Amount:</span>
+          <span>₹${sale.finalAmount.toFixed(2)}</span>
+        </div>
+        <div class="summary-row">
+          <span>Payment Method:</span>
+          <span>${sale.paymentMethod.toUpperCase()}</span>
+        </div>
+      </div>
+      
+      <div class="footer">
+        Thank you for visiting ${settings.clinicName}!<br>
+        Get well soon!
+      </div>
+    `;
   };
 
   const generateBillContent = (sale: Sale): string => {
-    // ... (same as before, but enhanced to show strip/tablet info)
+    const customer = customers.find(c => c.id === sale.customerId);
+    const medicineItems = sale.items.filter(item => !item.medicineId.startsWith('service-') && item.medicineId !== 'consultation') as CartItem[];
+    const serviceItems = sale.items.filter(item => item.medicineId.startsWith('service-') || item.medicineId === 'consultation');
+    
+    let totalBaseAmount = 0;
+    let totalGstAmount = 0;
+    
+    medicineItems.forEach(item => {
+      const medicine = medicines.find(m => m.id === item.medicineId);
+      if (medicine && medicine.sellingPriceGst > 0) {
+        const basePrice = medicine.sellingPrice ?? 0;
+        const gstAmount = (basePrice * medicine.sellingPriceGst) / 100;
+        const basePricePerTablet = basePrice / (medicine.tabletsPerStrip || 1);
+        const gstAmountPerTablet = gstAmount / (medicine.tabletsPerStrip || 1);
+        const totalTablets = item.totalTablets || item.quantity;
+        totalBaseAmount += basePricePerTablet * totalTablets;
+        totalGstAmount += gstAmountPerTablet * totalTablets;
+      } else {
+        totalBaseAmount += item.totalPrice;
+      }
+    });
+    
+    serviceItems.forEach(item => {
+      totalBaseAmount += item.totalPrice;
+    });
+
+    return `
+=====================================
+        ${settings.clinicName}
+        ${settings.doctorName}
+=====================================
+
+${settings.clinicAddress}
+Phone: ${settings.clinicPhone}
+Email: ${settings.clinicEmail}
+License: ${settings.licenseNumber}
+
+=====================================
+           MEDICAL BILL
+=====================================
+
+Bill No: ${sale.id.substring(0, 8)}
+Patient ID: ${sale.patientId}
+Date: ${new Date(sale.createdAt).toLocaleDateString()}
+Time: ${new Date(sale.createdAt).toLocaleTimeString()}
+
+Patient Details:
+Name: ${sale.customerName}
+Phone: ${customer?.phone || 'N/A'}
+Address: ${customer?.address || 'N/A'}
+
+=====================================
+CONSULTATION SERVICES:
+=====================================
+
+${serviceItems.length > 0 ? serviceItems.map((item, index) => 
+  `${index + 1}. ${item.medicineName}
+   Qty: ${item.quantity} x ₹${item.unitPrice.toFixed(2)} = ₹${item.totalPrice.toFixed(2)}`
+).join('\n\n') : 'No consultation services'}
+
+${medicineItems.length > 0 ? `
+=====================================
+MEDICINES:
+=====================================
+
+${medicineItems.map((item, index) => 
+  {
+    const medicine = medicines.find(m => m.id === item.medicineId);
+    const totalTablets = item.totalTablets || item.quantity;
+    const strips = item.strips || 0;
+    const extraTablets = item.extraTablets || 0;
+    
+    let itemDetails = `${index + 1}. ${item.medicineName}`;
+    
+    if (strips > 0 && extraTablets > 0) {
+      itemDetails += `
+   ${strips} strips × ${item.tabletsPerStrip} tablets = ${strips * item.tabletsPerStrip} tablets
+   + ${extraTablets} extra tablets
+   Total: ${totalTablets} tablets`;
+    } else if (strips > 0) {
+      itemDetails += `
+   ${strips} strips × ${item.tabletsPerStrip} tablets = ${totalTablets} tablets`;
+    } else {
+      itemDetails += `
+   ${totalTablets} tablets`;
+    }
+    
+    itemDetails += `
+   Rate: ₹${item.unitPrice.toFixed(2)} per tablet
+   Total: ₹${item.totalPrice.toFixed(2)}`;
+    
+    if (medicine && medicine.sellingPriceGst > 0) {
+      const basePrice = medicine.sellingPrice ?? 0;
+      const gstAmount = (basePrice * medicine.sellingPriceGst) / 100;
+      const basePricePerTablet = basePrice / (medicine.tabletsPerStrip || 1);
+      const gstAmountPerTablet = gstAmount / (medicine.tabletsPerStrip || 1);
+      itemDetails += `
+   (Base: ₹${basePricePerTablet.toFixed(2)}/tab + GST ${medicine.sellingPriceGst}%: ₹${gstAmountPerTablet.toFixed(2)}/tab)`;
+    }
+    
+    return itemDetails;
+  }
+).join('\n\n')}` : ''}
+
+=====================================
+BILLING SUMMARY:
+=====================================
+
+${servicesTotal > 0 ? `Services Total:   ₹${servicesTotal.toFixed(2)}` : ''}
+${medicinesTotal > 0 ? `Medicines Total:  ₹${medicinesTotal.toFixed(2)}` : ''}
+${totalGstAmount > 0 ? `GST Amount:       ₹${totalGstAmount.toFixed(2)}` : ''}
+Subtotal:         ₹${sale.totalAmount.toFixed(2)}
+Discount:         ₹${sale.discount.toFixed(2)}
+Total Amount:     ₹${sale.finalAmount.toFixed(2)}
+
+Payment Method: ${sale.paymentMethod.toUpperCase()}
+
+=====================================
+Thank you for visiting ${settings.clinicName}!
+Get well soon!
+=====================================
+    `;
+  };
+
+  const updateMedicineInput = (medicineId: string, field: 'strips' | 'extraTablets', value: string) => {
+    setMedicineInputs(prev => ({
+      ...prev,
+      [medicineId]: {
+        ...prev[medicineId],
+        [field]: value
+      }
+    }));
   };
 
   return (
@@ -704,36 +1017,9 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
                   </div>
                 )}
 
-                {/* Enhanced Medicines Section with Strip/Tablet Selection */}
+                {/* Enhanced Medicines with Strip/Tablet Options */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Add Medicines</label>
-                  
-                  {/* Sale Type Toggle */}
-                  <div className="flex space-x-2 mb-3">
-                    <button
-                      onClick={() => setSelectedSaleType('strip')}
-                      className={`flex items-center space-x-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        selectedSaleType === 'strip'
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                      }`}
-                    >
-                      <Package className="h-4 w-4" />
-                      <span>Sell by Strips</span>
-                    </button>
-                    <button
-                      onClick={() => setSelectedSaleType('tablet')}
-                      className={`flex items-center space-x-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        selectedSaleType === 'tablet'
-                          ? 'bg-green-600 text-white'
-                          : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                      }`}
-                    >
-                      <Pill className="h-4 w-4" />
-                      <span>Sell by Tablets</span>
-                    </button>
-                  </div>
-                  
                   <div className="relative mb-2">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
                     <input
@@ -746,10 +1032,14 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
                   </div>
                   
                   <div className="max-h-64 overflow-y-auto border border-gray-300 rounded-lg">
-                    {filteredMedicines.map(medicine => {
-                      const available = getAvailableQuantity(medicine.id);
-                      const cartItemsForMedicine = cartItems.filter(item => item.medicineId === medicine.id);
+                    {filteredMedicines.filter(m => getAvailableQuantity(m.id) > 0).map(medicine => {
+                      const availableQty = getAvailableQuantity(medicine.id);
+                      const cartItem = cartItems.find(item => item.medicineId === medicine.id);
                       const tabletsPerStrip = medicine.tabletsPerStrip || 1;
+                      const pricePerTablet = (medicine.totalSellingPrice ?? medicine.sellingPrice) / tabletsPerStrip;
+                      const availableStrips = getAvailableStrips(medicine.id);
+                      const availableExtraTablets = getAvailableExtraTablets(medicine.id);
+                      const currentInput = medicineInputs[medicine.id] || { strips: '', extraTablets: '' };
                       
                       return (
                         <div key={medicine.id} className="p-3 border-b border-gray-200 hover:bg-gray-50">
@@ -757,99 +1047,85 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
                             <div className="flex-1">
                               <h4 className="font-medium text-gray-900 text-sm">{medicine.name}</h4>
                               <p className="text-xs text-gray-600">{medicine.brand}</p>
-                              <p className="text-xs text-gray-500">
-                                {tabletsPerStrip} tablets per strip • 
-                                ₹{(medicine.totalSellingPrice ?? medicine.sellingPrice ?? 0).toFixed(2)} per strip
-                              </p>
-                              
-                              {/* Show cart items for this medicine */}
-                              {cartItemsForMedicine.length > 0 && (
-                                <div className="mt-1 space-y-1">
-                                  {cartItemsForMedicine.map((item, index) => (
-                                    <div key={index} className="text-xs">
-                                      <span className="font-medium text-blue-600">
-                                        In cart: {item.quantity} {item.saleType === 'strip' ? 'strips' : 'tablets'}
-                                        {item.saleType === 'tablet' && ` (${item.totalTablets} tablets)`}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
+                              <div className="flex items-center space-x-2 text-xs text-gray-500 mt-1">
+                                <Package className="h-3 w-3" />
+                                <span>{tabletsPerStrip} tablets/strip</span>
+                              </div>
+                              {cartItem && (
+                                <p className="text-xs text-blue-600 font-medium">
+                                  In cart: {cartItem.totalTablets} tablets
+                                  {cartItem.strips > 0 && ` (${cartItem.strips} strips`}
+                                  {cartItem.extraTablets > 0 && ` + ${cartItem.extraTablets} tablets)`}
+                                  {cartItem.strips > 0 && cartItem.extraTablets === 0 && ')'}
+                                </p>
                               )}
                             </div>
                             <div className="text-right">
-                              <span className="text-sm font-bold text-green-600">
-                                {selectedSaleType === 'strip' 
-                                  ? `₹${(medicine.totalSellingPrice ?? medicine.sellingPrice ?? 0).toFixed(2)}`
-                                  : `₹${((medicine.totalSellingPrice ?? medicine.sellingPrice ?? 0) / tabletsPerStrip).toFixed(2)}`
-                                }
-                                <span className="text-xs font-normal"> per {selectedSaleType}</span>
-                              </span>
-                              
-                              <div className="space-y-1 mt-1">
+                              <span className="text-sm font-bold text-green-600">₹{pricePerTablet.toFixed(2)}/tab</span>
+                              <div className="text-xs text-gray-500">
+                                Strip: ₹{(medicine.totalSellingPrice ?? medicine.sellingPrice ?? 0).toFixed(2)}
+                              </div>
+                              {medicine.sellingPriceGst > 0 && (
+                                <div className="text-xs text-gray-500">
+                                  Base: ₹{((medicine.sellingPrice ?? 0) / tabletsPerStrip).toFixed(2)}/tab + GST({medicine.sellingPriceGst}%)
+                                </div>
+                              )}
+                              <div className="space-y-1">
                                 <div className={`text-xs px-2 py-1 rounded-full font-medium ${
-                                  available.tablets <= (medicine.minStockLevel || 0) * tabletsPerStrip
+                                  availableQty <= medicine.minStockLevel
                                     ? 'bg-orange-100 text-orange-800'
                                     : 'bg-green-100 text-green-800'
                                 }`}>
-                                  Available: {selectedSaleType === 'strip' ? available.strips : available.tablets} {selectedSaleType}
+                                  Available: {availableStrips} strips + {availableExtraTablets} tabs
                                 </div>
                               </div>
                             </div>
                           </div>
                           
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-2">
+                          <div className="grid grid-cols-3 gap-2 items-end">
+                            <div>
+                              <label className="text-xs text-gray-500">Strips</label>
                               <input
                                 type="number"
-                                min="1"
-                                max={selectedSaleType === 'strip' ? available.strips : available.tablets}
-                                placeholder="Qty"
-                                value={selectedSaleType === 'tablet' ? tabletQuantity : undefined}
-                                onChange={(e) => {
-                                  const value = parseInt(e.target.value) || 1;
-                                  if (selectedSaleType === 'tablet') {
-                                    setTabletQuantity(value);
-                                  }
-                                }}
-                                className="w-16 px-2 py-1 border border-gray-300 rounded text-xs"
-                                onKeyPress={(e) => {
-                                  if (e.key === 'Enter') {
-                                    const qty = parseInt((e.target as HTMLInputElement).value);
-                                    const maxQty = selectedSaleType === 'strip' ? available.strips : available.tablets;
-                                    if (qty > 0 && qty <= maxQty) {
-                                      addToCart(medicine, qty, selectedSaleType);
-                                      if (selectedSaleType === 'strip') {
-                                        (e.target as HTMLInputElement).value = '';
-                                      } else {
-                                        setTabletQuantity(1);
-                                      }
-                                    }
-                                  }
-                                }}
+                                min="0"
+                                max={availableStrips}
+                                value={currentInput.strips}
+                                onChange={(e) => updateMedicineInput(medicine.id, 'strips', e.target.value)}
+                                placeholder="0"
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
                               />
-                              <span className="text-xs text-gray-500">
-                                Max: {selectedSaleType === 'strip' ? available.strips : available.tablets}
-                              </span>
+                            </div>
+                            <div>
+                              <label className="text-xs text-gray-500">Extra Tablets</label>
+                              <input
+                                type="number"
+                                min="0"
+                                max={availableExtraTablets}
+                                value={currentInput.extraTablets}
+                                onChange={(e) => updateMedicineInput(medicine.id, 'extraTablets', e.target.value)}
+                                placeholder="0"
+                                className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+                              />
                             </div>
                             <button
                               onClick={() => {
-                                const qty = selectedSaleType === 'tablet' ? tabletQuantity : 1;
-                                const maxQty = selectedSaleType === 'strip' ? available.strips : available.tablets;
-                                if (qty > 0 && qty <= maxQty) {
-                                  addToCart(medicine, qty, selectedSaleType);
-                                  if (selectedSaleType === 'strip') {
-                                    const input = document.querySelector(`input[max="${available.strips}"]`) as HTMLInputElement;
-                                    if (input) input.value = '';
-                                  } else {
-                                    setTabletQuantity(1);
-                                  }
+                                const strips = parseInt(currentInput.strips) || 0;
+                                const extraTablets = parseInt(currentInput.extraTablets) || 0;
+                                const totalTablets = (strips * tabletsPerStrip) + extraTablets;
+                                
+                                if (totalTablets > 0 && totalTablets <= availableQty) {
+                                  addToCart(medicine, strips, extraTablets);
                                 }
                               }}
-                              disabled={(selectedSaleType === 'strip' ? available.strips : available.tablets) === 0}
+                              disabled={availableQty === 0}
                               className="px-3 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 disabled:opacity-50"
                             >
-                              Add {selectedSaleType === 'strip' ? 'Strip' : 'Tablets'}
+                              Add
                             </button>
+                          </div>
+                          
+                          <div className="mt-2 text-xs text-gray-500">
+                            Max: {availableStrips} strips + {availableExtraTablets} tablets = {availableQty} total tablets
                           </div>
                         </div>
                       );
@@ -891,193 +1167,517 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
                                 <div className="flex items-center space-x-1 mt-1">
                                   <span className="text-xs">₹</span>
                                   <input
-                                      type="number"
-                                      min="0"
-                                      step="0.01"
-                                      value={selectedService.customPrice || selectedService.service.amount}
-                                      onChange={(e) => updateServicePrice(selectedService.service.id, parseFloat(e.target.value) || 0)}
-                                      className="w-16 px-1 py-0.5 text-xs border border-blue-300 rounded"
-                                    />
-                                    <input
-                                      type="number"
-                                      min="1"
-                                      value={selectedService.quantity}
-                                      onChange={(e) => updateServiceQuantity(selectedService.service.id, parseInt(e.target.value) || 1)}
-                                      className="w-12 px-1 py-0.5 text-xs border border-blue-300 rounded"
-                                    />
-                                  </div>
-                                ) : (
-                                  <p className="text-xs text-blue-700">
-                                    {selectedService.quantity} × ₹{(selectedService.customPrice || selectedService.service.amount).toFixed(2)}
-                                  </p>
-                                )}
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={selectedService.customPrice || ''}
+                                    onChange={(e) => updateServicePrice(selectedService.service.id, parseFloat(e.target.value) || 0)}
+                                    className="w-12 px-1 py-0.5 border border-blue-300 rounded text-xs text-center"
+                                  />
+                                  <span className="text-xs">x</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={selectedService.quantity || ''}
+                                    onChange={(e) => updateServiceQuantity(selectedService.service.id, parseInt(e.target.value) || 1)}
+                                    className="w-10 px-1 py-0.5 border border-blue-300 rounded text-xs text-center"
+                                  />
+                                </div>
+                              ) : (
+                                <p className="text-xs text-blue-700">
+                                  ₹{selectedService.customPrice || selectedService.service.amount} x {selectedService.quantity}
+                                </p>
+                              )}
                             </div>
                           </div>
-                          <span className="font-medium text-blue-900">
-                            ₹{((selectedService.customPrice || selectedService.service.amount) * selectedService.quantity).toFixed(2)}
-                          </span>
+                          <div className="flex items-center space-x-1">
+                            <span className="text-sm font-medium text-blue-900">
+                              ₹{((selectedService.customPrice || selectedService.service.amount) * selectedService.quantity).toFixed(2)}
+                            </span>
+                            <button
+                              onClick={() => toggleService(selectedService.service)}
+                              className="text-red-600 hover:text-red-800 p-1"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}
-
-                    {/* Medicines in Cart */}
-                    {cartItems.map((item, index) => (
-                      <div key={index} className="p-2 border-b border-gray-200">
-                        <div className="flex justify-between items-center">
-                          <div className="flex-1">
-                            <p className="text-sm font-medium text-gray-900">{item.medicineName}</p>
-                            <p className="text-xs text-gray-600">
-                              {item.quantity} {item.saleType === 'strip' ? 'strips' : 'tablets'}
-                              {item.saleType === 'tablet' && item.totalTablets ? ` (${item.totalTablets} tablets)` : ''}
-                            </p>
-                          </div>
+                    
+                    {/* Medicine Cart Items with Enhanced Display */}
+                    {cartItems.map(item => (
+                      <div key={item.medicineId} className="p-2 border-b border-gray-200 flex justify-between items-center">
+                        <div className="flex-1">
+                          <p className="text-sm font-medium">{item.medicineName}</p>
                           {editMode ? (
-                            <div className="flex items-center space-x-1">
-                              <input
-                                type="number"
-                                min="1"
-                                value={item.quantity}
-                                onChange={(e) => updateCartQuantity(item.medicineId, parseInt(e.target.value) || 1, item.saleType!)}
-                                className="w-12 px-1 py-0.5 text-xs border border-gray-300 rounded"
-                              />
+                            <div className="flex items-center space-x-1 mt-1">
+                              <span className="text-xs">₹</span>
                               <input
                                 type="number"
                                 min="0"
                                 step="0.01"
-                                value={item.unitPrice}
-                                onChange={(e) => updateCartItemPrice(item.medicineId, parseFloat(e.target.value) || 0, item.saleType!)}
-                                className="w-16 px-1 py-0.5 text-xs border border-gray-300 rounded"
+                                value={item.unitPrice || ''}
+                                onChange={(e) => updateCartItemPrice(item.medicineId, parseFloat(e.target.value) || 0)}
+                                className="w-12 px-1 py-0.5 border border-gray-300 rounded text-xs text-center"
                               />
-                              <button
-                                onClick={() => removeFromCart(item.medicineId, item.saleType)}
-                                className="text-red-500 hover:text-red-700"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
+                              <span className="text-xs">x</span>
+                              <input
+                                type="number"
+                                min="1"
+                                max={medicines.find(m => m.id === item.medicineId)?.quantity || 1}
+                                value={item.totalTablets || ''}
+                                onChange={(e) => updateCartQuantity(item.medicineId, parseInt(e.target.value) || 1)}
+                                className="w-10 px-1 py-0.5 border border-gray-300 rounded text-xs text-center"
+                              />
+                              <span className="text-xs">tabs</span>
                             </div>
                           ) : (
-                            <span className="font-medium text-gray-900">₹{item.totalPrice?.toFixed(2)}</span>
+                            <div className="text-xs text-gray-600">
+                              {item.strips > 0 && item.extraTablets > 0 ? (
+                                <div>
+                                  <div>{item.strips} strips × {item.tabletsPerStrip} = {item.strips * item.tabletsPerStrip} tablets</div>
+                                  <div>+ {item.extraTablets} extra tablets</div>
+                                  <div>Total: {item.totalTablets} tablets</div>
+                                  <div>₹{item.unitPrice.toFixed(2)}/tablet</div>
+                                </div>
+                              ) : item.strips > 0 ? (
+                                <div>
+                                  <div>{item.strips} strips × {item.tabletsPerStrip} = {item.totalTablets} tablets</div>
+                                  <div>₹{item.unitPrice.toFixed(2)}/tablet</div>
+                                </div>
+                              ) : (
+                                <div>₹{item.unitPrice.toFixed(2)}/tablet × {item.totalTablets} tablets</div>
+                              )}
+                            </div>
                           )}
+                        </div>
+                        <div className="flex items-center space-x-1">
+                          {!editMode && (
+                            <>
+                              <button
+                                onClick={() => updateCartQuantity(item.medicineId, item.totalTablets - 1)}
+                                className="text-gray-500 hover:text-gray-700 p-1"
+                              >
+                                <Minus className="h-3 w-3" />
+                              </button>
+                              <span className="text-xs w-8 text-center">{item.totalTablets}</span>
+                              <button
+                                onClick={() => updateCartQuantity(item.medicineId, item.totalTablets + 1)}
+                                className="text-gray-500 hover:text-gray-700 p-1"
+                              >
+                                <Plus className="h-3 w-3" />
+                              </button>
+                            </>
+                          )}
+                          <span className="text-sm font-medium ml-2">₹{(item.totalPrice ?? 0).toFixed(2)}</span>
+                          <button
+                            onClick={() => removeFromCart(item.medicineId)}
+                            className="text-red-600 hover:text-red-800 p-1"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
                         </div>
                       </div>
                     ))}
+                    
+                    {cartItems.length === 0 && selectedServices.length === 0 && (
+                      <p className="p-4 text-gray-500 text-center text-sm">No items in cart</p>
+                    )}
                   </div>
                 </div>
 
-                {/* Totals */}
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span>Medicines Total</span>
-                    <span>₹{medicinesTotal.toFixed(2)}</span>
+                {/* Enhanced Billing Summary */}
+                <div className="bg-white p-3 rounded-lg border border-gray-300 mb-4">
+                  <div className="space-y-2 text-sm">
+                    {servicesTotal > 0 && (
+                      <div className="flex justify-between">
+                        <span className="flex items-center space-x-1">
+                          <Stethoscope className="h-3 w-3 text-blue-600" />
+                          <span>Services:</span>
+                        </span>
+                        <span className="font-medium">₹{servicesTotal.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {medicinesTotal > 0 && (
+                      <div className="flex justify-between">
+                        <span>Medicines:</span>
+                        <span>₹{medicinesTotal.toFixed(2)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between border-t pt-2">
+                      <span>Subtotal:</span>
+                      <span>₹{subtotal.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <label>Discount:</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max={subtotal}
+                        value={discount || ''}
+                        onChange={(e) => setDiscount(parseFloat(e.target.value) || 0)}
+                        className="w-20 px-2 py-1 border border-gray-300 rounded text-xs"
+                      />
+                    </div>
+                    <div className="flex justify-between font-bold text-base border-t pt-2">
+                      <span>Total:</span>
+                      <span>₹{finalAmount.toFixed(2)}</span>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Services Total</span>
-                    <span>₹{servicesTotal.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Subtotal</span>
-                    <span>₹{subtotal.toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span>Discount</span>
-                    <input
-                      type="number"
-                      min="0"
-                      value={discount}
-                      onChange={(e) => setDiscount(parseFloat(e.target.value) || 0)}
-                      className="w-20 px-2 py-1 border border-gray-300 rounded text-xs"
-                    />
-                  </div>
-                  <div className="flex justify-between font-bold text-gray-900">
-                    <span>Final Amount</span>
-                    <span>₹{finalAmount.toFixed(2)}</span>
+                  
+                  <div className="mt-3">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Payment</label>
+                    <select
+                      value={paymentMethod}
+                      onChange={(e) => setPaymentMethod(e.target.value as 'cash' | 'card' | 'upi')}
+                      className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                    >
+                      <option value="cash">Cash</option>
+                      <option value="card">Card</option>
+                      <option value="upi">UPI</option>
+                    </select>
                   </div>
                 </div>
 
-                {/* Payment Method */}
-                <div className="mt-3">
-                  <label className="block text-sm font-medium mb-1">Payment Method</label>
-                  <select
-                    value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value as 'cash' | 'card' | 'upi')}
-                    className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
+                {/* Action Buttons */}
+                <div className="space-y-2">
+                  <button
+                    onClick={handleSubmit}
+                    disabled={!selectedCustomer || (cartItems.length === 0 && selectedServices.length === 0)}
+                    className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
                   >
-                    <option value="cash">Cash</option>
-                    <option value="card">Card</option>
-                    <option value="upi">UPI</option>
-                  </select>
+                    Complete Sale
+                  </button>
+                  <button
+                    onClick={resetForm}
+                    className="w-full text-gray-600 bg-gray-100 py-2 px-4 rounded-lg hover:bg-gray-200 text-sm"
+                  >
+                    Cancel
+                  </button>
                 </div>
-
-                {/* Submit */}
-                <button
-                  onClick={handleSubmit}
-                  disabled={!selectedCustomer || (cartItems.length === 0 && selectedServices.length === 0)}
-                  className="mt-4 w-full bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
-                  Complete Sale
-                </button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Bill Modal */}
+      {/* Enhanced Bill Modal */}
       {showBill && currentBill && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg w-full max-w-3xl max-h-[90vh] overflow-auto">
-            <div className="flex justify-between items-center p-4 border-b">
-              <h3 className="text-lg font-semibold">Bill</h3>
-              <button
-                onClick={() => setShowBill(false)}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                <X className="h-5 w-5" />
-              </button>
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            {/* Bill Header */}
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex justify-between items-start">
+                <h3 className="text-lg font-semibold">Bill Details</h3>
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => setShowBill(false)}
+                    className="text-gray-400 hover:text-gray-600 transition-colors p-1"
+                    title="Close"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                  <button
+                    onClick={resendSMS}
+                    disabled={sendingSMS}
+                    className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center space-x-2 disabled:opacity-50"
+                    title="Send SMS"
+                  >
+                    <MessageSquare className="h-4 w-4" />
+                    <span>{sendingSMS ? 'Sending...' : 'Send SMS'}</span>
+                  </button>
+                  <button
+                    onClick={printBill}
+                    className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center space-x-2"
+                  >
+                    <Printer className="h-4 w-4" />
+                    <span>Print</span>
+                  </button>
+                  <button
+                    onClick={downloadBill}
+                    className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>Download</span>
+                  </button>
+                </div>
+              </div>
             </div>
-            <div className="p-4">
-              {/* Bill content rendering */}
-              <pre className="text-sm bg-gray-100 p-3 rounded">{generateBillContent(currentBill)}</pre>
 
-              {/* Actions */}
-              <div className="flex justify-end space-x-2 mt-4">
-                <button
-                  onClick={printBill}
-                  className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
-                >
-                  <Printer className="h-4 w-4 inline mr-1" /> Print
-                </button>
-                <button
-                  onClick={downloadBill}
-                  className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700 text-sm"
-                >
-                  <Download className="h-4 w-4 inline mr-1" /> Download
-                </button>
-                <button
-                  onClick={resendSMS}
-                  disabled={sendingSMS}
-                  className="px-3 py-1 bg-purple-600 text-white rounded hover:bg-purple-700 text-sm disabled:opacity-50"
-                >
-                  {sendingSMS ? 'Sending...' : 'Resend SMS'}
-                </button>
+            {/* Enhanced Bill Content */}
+            <div className="p-6">
+              {/* Bill Info */}
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div>
+                  <p className="text-sm text-gray-600">Bill No:</p>
+                  <p className="font-semibold">{currentBill.id.substring(0, 8)}</p>
+                  <p className="text-sm text-gray-600">Patient ID:</p>
+                  <p className="font-semibold">{currentBill.patientId}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm text-gray-600">Date:</p>
+                  <p className="font-semibold">{new Date(currentBill.createdAt).toLocaleDateString()}</p>
+                  <p className="text-sm text-gray-600">Time:</p>
+                  <p className="font-semibold">{new Date(currentBill.createdAt).toLocaleTimeString()}</p>
+                </div>
               </div>
 
-              {/* SMS Status */}
-              {smsStatus.show && (
-                <div
-                  className={`mt-3 p-2 rounded text-sm ${
-                    smsStatus.success ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                  }`}
-                >
-                  {smsStatus.message}
+              {/* Patient Info */}
+              <div className="mb-6">
+                <h4 className="font-semibold mb-2">Patient Details</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-gray-600">Name:</p>
+                    <p className="font-medium">{currentBill.customerName}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Phone:</p>
+                    <p className="font-medium">{customers.find(c => c.id === currentBill.customerId)?.phone || 'N/A'}</p>
+                  </div>
                 </div>
-              )}
+              </div>
+
+              {/* Enhanced Items Table with Service Separation */}
+              <div className="mb-6">
+                <h4 className="font-semibold mb-3">Services & Items</h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full border border-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase border-b">Type</th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase border-b">Item</th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase border-b">Qty</th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase border-b">Rate</th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase border-b">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {currentBill.items.map((item, index) => {
+                        const isService = item.medicineId.startsWith('service-') || item.medicineId === 'consultation';
+                        const cartItem = !isService ? cartItems.find(ci => ci.medicineId === item.medicineId) : null;
+                        const medicine = !isService ? medicines.find(m => m.id === item.medicineId) : null;
+                        
+                        return (
+                          <tr key={index}>
+                            <td className="px-4 py-2 text-sm">
+                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                isService 
+                                  ? 'bg-blue-100 text-blue-800' 
+                                  : 'bg-green-100 text-green-800'
+                              }`}>
+                                {isService ? (
+                                  <><Stethoscope className="h-3 w-3 mr-1" />Service</>
+                                ) : (
+                                  'Medicine'
+                                )}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2 text-sm">
+                              <div>
+                                <div className="font-medium">{item.medicineName}</div>
+                                {medicine && medicine.brand && (
+                                  <div className="text-xs text-gray-500">{medicine.brand}</div>
+                                )}
+                                {!isService && cartItem && (
+                                  <div className="text-xs text-blue-600">
+                                    {cartItem.strips > 0 && `${cartItem.strips} strips`}
+                                    {cartItem.strips > 0 && cartItem.extraTablets > 0 && ' + '}
+                                    {cartItem.extraTablets > 0 && `${cartItem.extraTablets} tablets`}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-4 py-2 text-sm">
+                              {isService ? item.quantity : `${item.quantity} tabs`}
+                            </td>
+                            <td className="px-4 py-2 text-sm">
+                              ₹{item.unitPrice.toFixed(2)}{!isService && '/tab'}
+                            </td>
+                            <td className="px-4 py-2 text-sm font-medium">₹{item.totalPrice.toFixed(2)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Enhanced Bill Summary */}
+              <div className="border-t border-gray-200 pt-4">
+                <div className="flex justify-end">
+                  <div className="w-64 space-y-2">
+                    {(() => {
+                      // Separate services and medicines for summary
+                      const serviceItems = currentBill.items.filter(item => 
+                        item.medicineId.startsWith('service-') || item.medicineId === 'consultation'
+                      );
+                      const medicineItems = currentBill.items.filter(item => 
+                        !item.medicineId.startsWith('service-') && item.medicineId !== 'consultation'
+                      );
+                      
+                      const servicesTotal = serviceItems.reduce((sum, item) => sum + item.totalPrice, 0);
+                      const medicinesTotal = medicineItems.reduce((sum, item) => sum + item.totalPrice, 0);
+                      
+                      return (
+                        <>
+                          {servicesTotal > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-sm flex items-center space-x-1">
+                                <Stethoscope className="h-3 w-3 text-blue-600" />
+                                <span>Services:</span>
+                              </span>
+                              <span className="text-sm">₹{servicesTotal.toFixed(2)}</span>
+                            </div>
+                          )}
+                          {medicinesTotal > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-sm">Medicines:</span>
+                              <span className="text-sm">₹{medicinesTotal.toFixed(2)}</span>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                    <div className="flex justify-between border-t pt-2">
+                      <span className="text-sm">Subtotal:</span>
+                      <span className="text-sm">₹{currentBill.totalAmount.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm">Discount:</span>
+                      <span className="text-sm">₹{currentBill.discount.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold border-t pt-2">
+                      <span className="text-lg">Total:</span>
+                      <span className="text-lg">₹{currentBill.finalAmount.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm">Payment:</span>
+                      <span className="text-sm uppercase">{currentBill.paymentMethod}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
+            
+            {/* SMS Status */}
+            {smsStatus.show && (
+              <div className={`mx-6 mb-4 p-3 rounded-lg border flex items-center space-x-2 ${
+                smsStatus.success 
+                  ? 'bg-green-50 border-green-200 text-green-800' 
+                  : 'bg-red-50 border-red-200 text-red-800'
+              }`}>
+                {smsStatus.success ? (
+                  <CheckCircle className="h-4 w-4" />
+                ) : (
+                  <AlertCircle className="h-4 w-4" />
+                )}
+                <span className="text-sm">{smsStatus.message}</span>
+              </div>
+            )}
           </div>
         </div>
       )}
+
+      {/* Enhanced Sales List */}
+      <div className="bg-white rounded-lg shadow">
+        <div className="p-4 border-b border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-900">Recent Sales</h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sale ID</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Patient</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Items</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Services</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Payment</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {filteredSales.slice(0, 10).reverse().map((sale) => {
+                const serviceCount = sale.items.filter(item => 
+                  item.medicineId.startsWith('service-') || item.medicineId === 'consultation'
+                ).length;
+                const medicineCount = sale.items.length - serviceCount;
+                
+                return (
+                  <tr key={sale.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                      #{sale.id.substring(0, 8)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">{sale.customerName}</p>
+                        <p className="text-xs text-gray-500">{sale.patientId}</p>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-900">
+                      {medicineCount > 0 ? medicineCount : '-'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center space-x-1">
+                        {serviceCount > 0 ? (
+                          <>
+                            <Stethoscope className="h-3 w-3 text-blue-600" />
+                            <span className="text-sm">{serviceCount}</span>
+                          </>
+                        ) : (
+                          <span className="text-sm text-gray-400">-</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-sm font-medium text-green-600">
+                      ₹{(sale.finalAmount ?? 0).toFixed(2)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 capitalize">
+                        {sale.paymentMethod}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-900">
+                      {new Date(sale.createdAt).toLocaleDateString()}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => {
+                            setCurrentBill(sale);
+                            setShowBill(true);
+                            setEditMode(false);
+                          }}
+                          className="text-blue-600 hover:text-blue-900 flex items-center space-x-1 text-sm"
+                        >
+                          <Receipt className="h-3 w-3" />
+                          <span>Bill</span>
+                        </button>
+                        <button
+                          onClick={() => handleEditBill(sale)}
+                          className="text-green-600 hover:text-green-900 flex items-center space-x-1 text-sm"
+                        >
+                          <Edit2 className="h-3 w-3" />
+                          <span>Edit</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {filteredSales.length === 0 && (
+          <div className="text-center py-8">
+            <ShoppingCart className="mx-auto h-8 w-8 text-gray-400" />
+            <h3 className="mt-2 text-sm font-medium text-gray-900">No sales yet</h3>
+            <p className="mt-1 text-sm text-gray-500">Start by making your first sale.</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
-
-
