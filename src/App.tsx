@@ -15,6 +15,7 @@ import { updateNotifications } from './utils/notifications';
 import { generatePatientId } from './utils/patientId';
 import { authService } from './utils/auth';
 
+
 interface SettingsData {
   doctorConsultationCharge: number;
   clinicName: string;
@@ -45,6 +46,7 @@ interface SettingsData {
     backupFrequency: string;
   };
 }
+
 
 function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
