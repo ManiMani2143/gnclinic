@@ -7,16 +7,18 @@ import {
   Calendar,
   FileText,
   BarChart3,
-  RefreshCw
+  RefreshCw,
+  Truck
 } from 'lucide-react';
-import { Medicine, Customer, Sale, Notification } from '../types';
+import { Medicine, Customer, Sale, Notification, Purchase } from '../types';
 
 interface DashboardProps {
   medicines: Medicine[];
   customers: Customer[];
   sales: Sale[];
+  purchases: Purchase[];
   notifications: Notification[];
-  settings?: any; // Add settings prop for doctor name
+  settings?: any;
   onSectionChange: (section: string) => void;
   onRefresh?: () => void;
 }
@@ -50,11 +52,9 @@ const downloadPatientReport = (sales: Sale[], customers: Customer[], medicines: 
   const patientReportData: any[] = [];
   let serialNumber = 1;
 
-  // Process each sale to extract patient report data
   sales.forEach(sale => {
     const customer = customers.find(c => c.id === sale.customerId);
     
-    // Filter only medicine items (exclude consultation services)
     const medicineItems = sale.items.filter(item => 
       !item.medicineId.startsWith('service-') && item.medicineId !== 'consultation'
     );
@@ -73,15 +73,54 @@ const downloadPatientReport = (sales: Sale[], customers: Customer[], medicines: 
         'Manufacturer Name': medicine?.brand || 'N/A',
         'Batch No': medicine?.batchNumber || 'N/A',
         'Expire Date': medicine ? new Date(medicine.expiryDate).toLocaleDateString('en-IN') : 'N/A',
-        'Sign': '________________' // Placeholder for signature
+        'Sign': '________________'
       });
     });
   });
 
-  // Sort by bill date (most recent first)
   patientReportData.sort((a, b) => new Date(b['Bill Date']).getTime() - new Date(a['Bill Date']).getTime());
-
   exportToExcel(patientReportData, 'patient-report', 'Patient Report');
+};
+
+// Enhanced Purchase Report Function
+const downloadPurchaseReport = (purchases: Purchase[], medicines: Medicine[]) => {
+  console.log('Generating purchase report with data:', purchases.length, 'purchases');
+  
+  if (purchases.length === 0) {
+    alert('No purchase data available for export. Add medicines to generate purchase records.');
+    return;
+  }
+
+  const purchaseReportData: any[] = [];
+  let serialNumber = 1;
+
+  purchases.forEach(purchase => {
+    purchase.items.forEach(item => {
+      const medicine = medicines.find(m => m.id === item.medicineId);
+      
+      purchaseReportData.push({
+        'Sl No': serialNumber++,
+        'Purchase ID': purchase.id.substring(0, 8),
+        'Purchase Date': new Date(purchase.purchaseDate).toLocaleDateString('en-IN'),
+        'Supplier Name': purchase.supplierName || 'N/A',
+        'Supplier Invoice': purchase.invoiceNumber || 'Auto-Generated',
+        'Medicine Name': item.medicineName,
+        'Brand': medicine?.brand || 'N/A',
+        'Batch Number': item.batchNumber || medicine?.batchNumber || 'N/A',
+        'Expiry Date': item.expiryDate ? new Date(item.expiryDate).toLocaleDateString('en-IN') : 'N/A',
+        'Quantity': item.quantity,
+        'Purchase Rate': `₹${item.purchaseRate?.toFixed(2) || '0.00'}`,
+        'MRP': `₹${item.mrp?.toFixed(2) || '0.00'}`,
+        'Total Amount': `₹${(item.quantity * (item.purchaseRate || 0)).toFixed(2)}`,
+        'GST': item.gst ? `${item.gst}%` : 'N/A',
+        'Payment Method': medicine?.paymentMethod || 'Cash'
+      });
+    });
+  });
+
+  // Sort by purchase date (most recent first)
+  purchaseReportData.sort((a, b) => new Date(b['Purchase Date']).getTime() - new Date(a['Purchase Date']).getTime());
+  exportToExcel(purchaseReportData, 'purchase-report', 'Purchase Report');
 };
 
 const exportToExcel = (data: any[], filename: string, title: string) => {
@@ -90,11 +129,9 @@ const exportToExcel = (data: any[], filename: string, title: string) => {
     return;
   }
 
-  // Create CSV content with proper headers
   const headers = Object.keys(data[0]).join(',');
   const rows = data.map(item => 
     Object.values(item).map(value => {
-      // Handle values that contain commas, quotes, or newlines
       const stringValue = String(value || '');
       if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
         return `"${stringValue.replace(/"/g, '""')}"`;
@@ -105,7 +142,6 @@ const exportToExcel = (data: any[], filename: string, title: string) => {
 
   const csvContent = `${headers}\n${rows}`;
   
-  // Create and download file
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement('a');
   const url = URL.createObjectURL(blob);
@@ -118,7 +154,6 @@ const exportToExcel = (data: any[], filename: string, title: string) => {
   link.click();
   document.body.removeChild(link);
   
-  // Show success message
   setTimeout(() => {
     alert(`${title} has been downloaded successfully!`);
   }, 100);
@@ -128,6 +163,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   medicines, 
   customers, 
   sales, 
+  purchases = [],
   notifications,
   settings = {},
   onSectionChange,
@@ -143,12 +179,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const totalMedicines = medicines.length;
   const totalPatients = customers.length;
   const totalSales = sales.length;
+  const totalPurchases = purchases.length;
   const unreadNotifications = notifications.filter(n => !n.isRead).length;
   
-  // Calculate low stock count
   const lowStockCount = medicines.filter(m => m.quantity <= m.minStockLevel).length;
   
-  // Calculate expiring soon count (within 30 days)
   const expiringSoon = medicines.filter(m => {
     try {
       const expiryDate = new Date(m.expiryDate);
@@ -161,7 +196,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
   }).length;
 
-  // Calculate expired medicines
   const expiredMedicines = medicines.filter(m => {
     try {
       const expiryDate = new Date(m.expiryDate);
@@ -184,9 +218,18 @@ export const Dashboard: React.FC<DashboardProps> = ({
     onSectionChange('notifications');
   };
 
-  // Enhanced Patient Report Handler
   const handlePatientReportClick = () => {
+    if (sales.length === 0) {
+      alert('No sales data available. Make some sales first to generate patient reports.');
+      return;
+    }
     downloadPatientReport(sales, customers, medicines, settings);
+  };
+
+  // Enhanced Purchase Report Handler
+  const handlePurchaseReportClick = () => {
+    console.log('Purchase report clicked. Purchases available:', purchases.length);
+    downloadPurchaseReport(purchases, medicines);
   };
 
   // Stats cards configuration
@@ -214,6 +257,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
       color: 'bg-purple-500',
       textColor: 'text-purple-600',
       onClick: () => onSectionChange('sales'),
+    },
+    {
+      title: 'Total Purchases',
+      value: totalPurchases,
+      icon: Truck,
+      color: 'bg-indigo-500',
+      textColor: 'text-indigo-600',
+      onClick: () => console.log('Purchases clicked:', purchases.length),
     },
   ];
 
@@ -265,16 +316,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
       action: 'Generate Patient Report',
       onClick: handlePatientReportClick,
     },
-    {
-      title: 'Sales Report',
-      description: 'Generate sales transactions and revenue analysis',
-      icon: BarChart3,
-      color: 'bg-blue-500',
-      textColor: 'text-blue-600',
-      bgColor: 'bg-blue-50',
-      action: 'Generate Sales Report',
-      onClick: () => onSectionChange('reports'),
-    },
+    // {
+    //   title: 'Purchase Report',
+    //   description: 'Generate purchase transactions and supplier analysis',
+    //   icon: Truck,
+    //   color: 'bg-indigo-500',
+    //   textColor: 'text-indigo-600',
+    //   bgColor: 'bg-indigo-50',
+    //   action: 'Generate Purchase Report',
+    //   onClick: handlePurchaseReportClick,
+    // },
     {
       title: 'Stock Report',
       description: 'Generate inventory and stock movement report',
@@ -283,7 +334,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       textColor: 'text-purple-600',
       bgColor: 'bg-purple-50',
       action: 'Generate Stock Report',
-      onClick: () => onSectionChange('reports'),
+      onClick: () => downloadCombinedStockReport(medicines),
     },
   ];
 
@@ -292,50 +343,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 5);
 
+  // Get recent purchases (last 5, most recent first)
+  const recentPurchases = [...purchases]
+    .sort((a, b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime())
+    .slice(0, 5);
+
   // Get low stock medicines
   const lowStockMedicines = medicines
     .filter(m => m.quantity <= m.minStockLevel)
     .slice(0, 5);
-
-  // Get expiring soon medicines
-  const expiringMedicines = medicines
-    .filter(m => {
-      try {
-        const expiryDate = new Date(m.expiryDate);
-        const thirtyDaysFromNow = new Date();
-        thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
-        return expiryDate <= thirtyDaysFromNow && expiryDate >= new Date();
-      } catch (error) {
-        return false;
-      }
-    })
-    .slice(0, 5);
-
-  // Calculate days until expiry
-  const getDaysUntilExpiry = (expiryDate: string) => {
-    try {
-      const expiry = new Date(expiryDate);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const timeDiff = expiry.getTime() - today.getTime();
-      return Math.ceil(timeDiff / (1000 * 3600 * 24));
-    } catch (error) {
-      return -1;
-    }
-  };
-
-  // Get expiry status text and color
-  const getExpiryStatus = (daysUntilExpiry: number) => {
-    if (daysUntilExpiry < 0) {
-      return { text: 'Expired', color: 'text-red-700' };
-    } else if (daysUntilExpiry === 0) {
-      return { text: 'Expires today', color: 'text-red-600' };
-    } else if (daysUntilExpiry <= 7) {
-      return { text: `${daysUntilExpiry} day${daysUntilExpiry === 1 ? '' : 's'} left`, color: 'text-red-500' };
-    } else {
-      return { text: `${daysUntilExpiry} days left`, color: 'text-orange-600' };
-    }
-  };
 
   return (
     <div className="space-y-6 p-4">
@@ -351,8 +367,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </button>
       </div>
 
+      {/* Debug Info (can be removed in production) */}
+      {purchases.length === 0 && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <div className="flex items-center">
+            <AlertTriangle className="h-5 w-5 text-yellow-600 mr-2" />
+            <div>
+              <h4 className="text-sm font-medium text-yellow-800">No Purchase Data Available</h4>
+              <p className="text-sm text-yellow-700">Add medicines in the Medicine Management section to automatically generate purchase records.</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat, index) => (
           <div 
             key={index} 
@@ -430,6 +459,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     Includes: Bill details, Patient info, Medicines, Batch numbers, Expiry dates
                   </p>
                 )}
+                {report.title === 'Purchase Report' && (
+                  <p className="text-xs text-gray-500 mt-2 text-center">
+                    Records: {purchases.length} purchases available
+                  </p>
+                )}
               </div>
             ))}
           </div>
@@ -462,6 +496,37 @@ export const Dashboard: React.FC<DashboardProps> = ({
               ))
             ) : (
               <p className="text-gray-500 text-center py-4">No recent sales</p>
+            )}
+          </div>
+        </div>
+
+        {/* Recent Purchases */}
+        <div className="bg-white rounded-lg shadow">
+          <div className="p-6 border-b border-gray-200">
+            <h3 className="text-lg font-semibold text-gray-900">Recent Purchases</h3>
+          </div>
+          <div className="p-6">
+            {recentPurchases.length > 0 ? (
+              recentPurchases.map((purchase) => (
+                <div key={purchase.id} className="flex justify-between items-center py-3 border-b border-gray-100 last:border-b-0">
+                  <div>
+                    <p className="font-medium text-gray-900">{purchase.supplierName || 'Auto-Generated'}</p>
+                    <p className="text-sm text-gray-600">
+                      {new Date(purchase.purchaseDate).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-semibold text-blue-600">
+                      ₹{(purchase.totalAmount || 0).toFixed(2)}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {purchase.items.length} items
+                    </p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="text-gray-500 text-center py-4">No purchase records yet</p>
             )}
           </div>
         </div>
@@ -503,52 +568,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
             )}
           </div>
         </div>
-
-        {/* Expiring Soon Medicines */}
-        <div className="bg-white rounded-lg shadow">
-          <div className="p-6 border-b border-gray-200">
-            <h3 className="text-lg font-semibold text-gray-900">Expiring Soon</h3>
-          </div>
-          <div className="p-6">
-            {expiringMedicines.length > 0 ? (
-              <>
-                {expiringMedicines.map((medicine) => {
-                  const daysUntilExpiry = getDaysUntilExpiry(medicine.expiryDate);
-                  const status = getExpiryStatus(daysUntilExpiry);
-                  
-                  return (
-                    <div key={medicine.id} className="flex justify-between items-center py-3 border-b border-gray-100 last:border-b-0">
-                      <div className="flex-1">
-                        <p className="font-medium text-gray-900 truncate">{medicine.name}</p>
-                        <p className="text-sm text-gray-600 truncate">{medicine.brand}</p>
-                      </div>
-                      <div className="text-right ml-2">
-                        <span className={`font-semibold ${status.color}`}>
-                          {status.text}
-                        </span>
-                        <p className="text-xs text-gray-500">
-                          {new Date(medicine.expiryDate).toLocaleDateString()}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
-                {expiringSoon > 5 && (
-                  <div className="mt-4 text-center">
-                    <button 
-                      onClick={handleExpiringClick}
-                      className="text-blue-600 hover:text-blue-800 text-sm font-medium"
-                    >
-                      View all {expiringSoon} expiring items →
-                    </button>
-                  </div>
-                )}
-              </>
-            ) : (
-              <p className="text-gray-500 text-center py-4">No medicines expiring soon</p>
-            )}
-          </div>
-        </div>
       </div>
 
       {/* Enhanced Quick Download Reports */}
@@ -565,9 +584,19 @@ export const Dashboard: React.FC<DashboardProps> = ({
               onClick={handlePatientReportClick}
               className="flex items-center justify-center px-4 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={sales.length === 0}
+              title={sales.length === 0 ? 'No sales data available' : `Generate report for ${sales.length} sales`}
             >
               <Users className="h-5 w-5 mr-2" />
               Patient Report ({sales.length})
+            </button>
+            <button
+              onClick={handlePurchaseReportClick}
+              className="flex items-center justify-center px-4 py-3 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={purchases.length === 0}
+              title={purchases.length === 0 ? 'No purchase data available. Add medicines to create purchase records.' : `Generate report for ${purchases.length} purchases`}
+            >
+              <Truck className="h-5 w-5 mr-2" />
+              Purchase Report ({purchases.length})
             </button>
             <button
               onClick={handleLowStockClick}
@@ -578,36 +607,48 @@ export const Dashboard: React.FC<DashboardProps> = ({
               Low Stock Report ({lowStockCount})
             </button>
             <button
-              onClick={handleExpiringClick}
-              className="flex items-center justify-center px-4 py-3 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={expiringSoon === 0}
-            >
-              <Calendar className="h-5 w-5 mr-2" />
-              Expiring Report ({expiringSoon})
-            </button>
-            <button
               onClick={() => downloadCombinedStockReport(medicines)}
               className="flex items-center justify-center px-4 py-3 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={medicines.length === 0}
             >
               <FileText className="h-5 w-5 mr-2" />
-              Combined Report
+              Combined Report ({medicines.length})
             </button>
           </div>
           
           <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <h4 className="font-medium text-blue-900 mb-2">Patient Report Includes:</h4>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-sm text-blue-800">
-              <span>• Serial Number</span>
-              <span>• Bill Number</span>
-              <span>• Bill Date</span>
-              <span>• Doctor Name</span>
-              <span>• Patient Name</span>
-              <span>• Medicine Name</span>
-              <span>• Quantity</span>
-              <span>• Manufacturer</span>
-              <span>• Batch Number</span>
-              <span>• Expiry Date</span>
+            <h4 className="font-medium text-blue-900 mb-2">Report Features:</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-blue-800">
+              <div>
+                <h5 className="font-semibold mb-1">Purchase Report Includes:</h5>
+                <div className="grid grid-cols-2 gap-1">
+                  <span>• Purchase ID</span>
+                  <span>• Purchase Date</span>
+                  <span>• Supplier Name</span>
+                  <span>• Medicine Details</span>
+                  <span>• Batch Info</span>
+                  <span>• Purchase Rate</span>
+                  <span>• MRP</span>
+                  <span>• GST Details</span>
+                </div>
+              </div>
+              <div>
+                <h5 className="font-semibold mb-1">Status:</h5>
+                <div className="space-y-1">
+                  <div className="flex justify-between">
+                    <span>Total Purchases:</span>
+                    <span className="font-medium">{purchases.length}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Total Medicines:</span>
+                    <span className="font-medium">{medicines.length}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Total Sales:</span>
+                    <span className="font-medium">{sales.length}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

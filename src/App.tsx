@@ -14,6 +14,7 @@ import { storage } from './utils/storage';
 import { updateNotifications } from './utils/notifications';
 import { generatePatientId } from './utils/patientId';
 import { authService } from './utils/auth';
+import { neon } from '@netlify/neon';
 
 
 interface SettingsData {

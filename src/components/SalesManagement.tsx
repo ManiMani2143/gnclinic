@@ -21,7 +21,7 @@ interface SalesManagementProps {
   customers: Customer[];
   sales: Sale[];
   settings: SettingsData;
-  onAddSale: (sale: Omit<Sale, 'id' | 'createdAt'>) => void;
+  onAddSale: (sale: Omit<Sale, 'createdAt'>, billNumber: string) => void;
   onUpdateMedicineStock: (medicineId: string, newQuantity: number) => void;
   onRefresh?: () => void;
 }
@@ -46,11 +46,10 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
   const [discount, setDiscount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'upi'>('cash');
   const [customerReentryAlert, setCustomerReentryAlert] = useState<string | null>(null);
-  
-  // Enhanced service selection state
+
   const [selectedServices, setSelectedServices] = useState<SelectedService[]>([]);
   const [showServiceCustomization, setShowServiceCustomization] = useState(false);
-  
+
   const [smsStatus, setSmsStatus] = useState<{ show: boolean; success: boolean; message: string }>({
     show: false,
     success: false,
@@ -59,10 +58,22 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
   const [sendingSMS, setSendingSMS] = useState(false);
   const [editMode, setEditMode] = useState(false);
 
-  // Medicine input states for each medicine
   const [medicineInputs, setMedicineInputs] = useState<{ [key: string]: { strips: string; extraTablets: string } }>({});
 
-  // Initialize medicine inputs
+  const generateBillNumber = (): string => {
+    // Find the highest existing bill number and increment it
+    const existingBillNumbers = sales.map(sale => {
+      const billNum = parseInt(sale.id);
+      return isNaN(billNum) ? 0 : billNum;
+    });
+    
+    const highestBillNumber = existingBillNumbers.length > 0 
+      ? Math.max(...existingBillNumbers) 
+      : 0;
+    
+    return (highestBillNumber + 1).toString().padStart(2, '0');
+  };
+
   useEffect(() => {
     const initialInputs: { [key: string]: { strips: string; extraTablets: string } } = {};
     medicines.forEach(medicine => {
@@ -71,14 +82,13 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     setMedicineInputs(initialInputs);
   }, [medicines]);
 
-  // Real-time medicine quantities considering cart items
   const getAvailableQuantity = (medicineId: string): number => {
     const medicine = medicines.find(m => m.id === medicineId);
     if (!medicine) return 0;
-    
+
     const cartItem = cartItems.find(item => item.medicineId === medicineId);
     const reservedQuantity = cartItem ? cartItem.totalTablets : 0;
-    
+
     return Math.max(0, medicine.quantity - reservedQuantity);
   };
 
@@ -114,19 +124,18 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     customer.patientId.includes(patientSearchTerm)
   );
 
-  // Check for customer re-entry within 3 days
   useEffect(() => {
     if (selectedCustomer) {
       const customerSales = sales.filter(sale => sale.customerId === selectedCustomer.id);
       if (customerSales.length > 0) {
-        const lastSale = customerSales.sort((a, b) => 
+        const lastSale = customerSales.sort((a, b) =>
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         )[0];
-        
+
         const daysSinceLastSale = Math.floor(
           (new Date().getTime() - new Date(lastSale.createdAt).getTime()) / (1000 * 60 * 60 * 24)
         );
-        
+
         if (daysSinceLastSale <= 3) {
           setCustomerReentryAlert(
             `⚠️ Patient ${selectedCustomer.name} visited ${daysSinceLastSale} day(s) ago on ${new Date(lastSale.createdAt).toLocaleDateString()}`
@@ -142,7 +151,6 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     }
   }, [selectedCustomer, sales]);
 
-  // Initialize default services
   useEffect(() => {
     if (settings.consultationServices && settings.consultationServices.length > 0 && selectedServices.length === 0) {
       const defaultServices = settings.consultationServices
@@ -152,22 +160,19 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
           quantity: 1,
           customPrice: service.amount
         }));
-      
+
       if (defaultServices.length > 0) {
         setSelectedServices(defaultServices);
       }
     }
   }, [settings.consultationServices]);
 
-  // Service management functions
   const toggleService = (service: ConsultationService) => {
     const existingIndex = selectedServices.findIndex(s => s.service.id === service.id);
-    
+
     if (existingIndex >= 0) {
-      // Remove service
       setSelectedServices(selectedServices.filter((_, index) => index !== existingIndex));
     } else {
-      // Add service
       setSelectedServices([...selectedServices, {
         service,
         quantity: 1,
@@ -181,17 +186,17 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
       setSelectedServices(selectedServices.filter(s => s.service.id !== serviceId));
       return;
     }
-    
-    setSelectedServices(selectedServices.map(selectedService => 
-      selectedService.service.id === serviceId 
+
+    setSelectedServices(selectedServices.map(selectedService =>
+      selectedService.service.id === serviceId
         ? { ...selectedService, quantity }
         : selectedService
     ));
   };
 
   const updateServicePrice = (serviceId: string, customPrice: number) => {
-    setSelectedServices(selectedServices.map(selectedService => 
-      selectedService.service.id === serviceId 
+    setSelectedServices(selectedServices.map(selectedService =>
+      selectedService.service.id === serviceId
         ? { ...selectedService, customPrice: Math.max(0, customPrice) }
         : selectedService
     ));
@@ -209,27 +214,26 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     const tabletsPerStrip = medicine.tabletsPerStrip || 1;
     const totalTablets = (strips * tabletsPerStrip) + extraTablets;
     const availableQty = getAvailableQuantity(medicine.id);
-    
+
     if (totalTablets <= 0 || totalTablets > availableQty) return;
-    
+
     const existingItem = cartItems.find(item => item.medicineId === medicine.id);
     const unitPricePerTablet = (medicine.totalSellingPrice ?? medicine.sellingPrice) / tabletsPerStrip;
-    
+
     if (existingItem) {
       const newTotalTablets = existingItem.totalTablets + totalTablets;
       if (newTotalTablets > medicine.quantity) return;
-      
+
       const newStrips = existingItem.strips + strips;
       const newExtraTablets = (existingItem.extraTablets || 0) + extraTablets;
-      
-      // Adjust if extra tablets make a complete strip
+
       const adjustedStrips = newStrips + Math.floor(newExtraTablets / tabletsPerStrip);
       const adjustedExtraTablets = newExtraTablets % tabletsPerStrip;
-      
+
       setCartItems(cartItems.map(item =>
         item.medicineId === medicine.id
-          ? { 
-              ...item, 
+          ? {
+              ...item,
               strips: adjustedStrips,
               extraTablets: adjustedExtraTablets,
               totalTablets: newTotalTablets,
@@ -251,8 +255,7 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
         totalPrice: totalTablets * unitPricePerTablet,
       }]);
     }
-    
-    // Clear input fields
+
     setMedicineInputs(prev => ({
       ...prev,
       [medicine.id]: { strips: '', extraTablets: '' }
@@ -268,23 +271,23 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
       removeFromCart(medicineId);
       return;
     }
-    
+
     const medicine = medicines.find(m => m.id === medicineId);
     if (!medicine || totalTablets > medicine.quantity) return;
-    
+
     const tabletsPerStrip = medicine.tabletsPerStrip || 1;
     const strips = Math.floor(totalTablets / tabletsPerStrip);
     const extraTablets = totalTablets % tabletsPerStrip;
-    
+
     setCartItems(cartItems.map(item =>
       item.medicineId === medicineId
-        ? { 
-            ...item, 
+        ? {
+            ...item,
             strips,
             extraTablets,
             quantity: totalTablets,
             totalTablets: totalTablets,
-            totalPrice: totalTablets * item.unitPrice 
+            totalPrice: totalTablets * item.unitPrice
           }
         : item
     ));
@@ -293,18 +296,17 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
   const updateCartItemPrice = (medicineId: string, unitPrice: number) => {
     setCartItems(cartItems.map(item =>
       item.medicineId === medicineId
-        ? { 
-            ...item, 
-            unitPrice, 
-            totalPrice: item.totalTablets * unitPrice 
+        ? {
+            ...item,
+            unitPrice,
+            totalPrice: item.totalTablets * unitPrice
           }
         : item
     ));
   };
 
-  // Calculate totals
   const medicinesTotal = cartItems.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
-  const servicesTotal = selectedServices.reduce((sum, selectedService) => 
+  const servicesTotal = selectedServices.reduce((sum, selectedService) =>
     sum + ((selectedService.customPrice || selectedService.service.amount) * selectedService.quantity), 0
   );
   const subtotal = medicinesTotal + servicesTotal;
@@ -314,9 +316,10 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     e.preventDefault();
     if (!selectedCustomer || (cartItems.length === 0 && selectedServices.length === 0)) return;
 
-    // Create sale items including all selected services
+    const billNumber = generateBillNumber();
+
     const saleItems: SaleItem[] = [...cartItems];
-    
+
     selectedServices.forEach(selectedService => {
       saleItems.push({
         medicineId: `service-${selectedService.service.id}`,
@@ -327,7 +330,8 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
       });
     });
 
-    const newSale: Omit<Sale, 'id' | 'createdAt'> = {
+    const newSale: Omit<Sale, 'createdAt'> = {
+      id: billNumber, // Use the generated bill number as ID
       customerId: selectedCustomer.id,
       customerName: selectedCustomer.name,
       patientId: selectedCustomer.patientId,
@@ -338,9 +342,8 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
       paymentMethod,
     };
 
-    onAddSale(newSale);
-    
-    // Update medicine stock based on total tablets consumed
+    onAddSale(newSale, billNumber);
+
     cartItems.forEach(item => {
       const currentMedicine = medicines.find(m => m.id === item.medicineId);
       if (currentMedicine) {
@@ -350,17 +353,14 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
 
     const completedSale: Sale = {
       ...newSale,
-      id: Date.now().toString(),
       createdAt: new Date().toISOString(),
     };
 
     setCurrentBill(completedSale);
     setShowBill(true);
-    
-    // Send SMS notification
+
     sendBillSMS(completedSale, selectedCustomer);
 
-    // Reset form
     resetForm();
   };
 
@@ -371,7 +371,7 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     const billSMSData: BillSMSData = {
       customerName: customer.name,
       customerPhone: customer.phone,
-      billNumber: sale.id.substring(0, 8),
+      billNumber: sale.id,
       totalAmount: sale.finalAmount,
       clinicName: settings.clinicName,
       clinicPhone: settings.clinicPhone
@@ -384,8 +384,7 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
         success: result.success,
         message: result.message
       });
-      
-      // Auto-hide status after 5 seconds
+
       setTimeout(() => {
         setSmsStatus({ show: false, success: false, message: '' });
       }, 5000);
@@ -411,15 +410,13 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     setShowForm(false);
     setShowServiceCustomization(false);
     setCustomerReentryAlert(null);
-    
-    // Reset medicine inputs
+
     const resetInputs: { [key: string]: { strips: string; extraTablets: string } } = {};
     medicines.forEach(medicine => {
       resetInputs[medicine.id] = { strips: '', extraTablets: '' };
     });
     setMedicineInputs(resetInputs);
-    
-    // Reset to default services
+
     if (settings.consultationServices && settings.consultationServices.length > 0) {
       const defaultServices = settings.consultationServices
         .filter(service => service.isDefault)
@@ -428,7 +425,7 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
           quantity: 1,
           customPrice: service.amount
         }));
-      
+
       setSelectedServices(defaultServices);
     }
   };
@@ -442,18 +439,16 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
   const printBill = () => {
     if (!currentBill) return;
 
-    // Create a new window for printing
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
-    // Generate bill content
     const billContent = generatePrintableBillContent(currentBill);
-    
+
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Bill ${currentBill.id.substring(0, 8)}</title>
+          <title>Bill ${currentBill.id}</title>
           <style>
             body {
               font-family: 'Arial', sans-serif;
@@ -548,19 +543,19 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
         </body>
       </html>
     `);
-    
+
     printWindow.document.close();
   };
 
   const downloadBill = () => {
     if (!currentBill) return;
-    
+
     const billContent = generateBillContent(currentBill);
     const blob = new Blob([billContent], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Bill_${currentBill.patientId}_${new Date(currentBill.createdAt).toLocaleDateString().replace(/\//g, '-')}.txt`;
+    a.download = `Bill_${currentBill.id}_${currentBill.patientId}_${new Date(currentBill.createdAt).toLocaleDateString().replace(/\//g, '-')}.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -577,7 +572,7 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     const customer = customers.find(c => c.id === sale.customerId);
     const medicineItems = sale.items.filter(item => !item.medicineId.startsWith('service-') && item.medicineId !== 'consultation') as CartItem[];
     const serviceItems = sale.items.filter(item => item.medicineId.startsWith('service-') || item.medicineId === 'consultation');
-    
+
     return `
       <div class="header">
         <div class="clinic-name">${settings.clinicName}</div>
@@ -585,10 +580,10 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
         <div class="clinic-details">${settings.clinicAddress}</div>
         <div class="clinic-details">Phone: ${settings.clinicPhone}</div>
       </div>
-      
+
       <div class="bill-info">
         <div>
-          <strong>Bill No:</strong> ${sale.id.substring(0, 8)}<br>
+          <strong>Bill No:</strong> ${sale.id}<br>
           <strong>Patient ID:</strong> ${sale.patientId}
         </div>
         <div>
@@ -596,12 +591,12 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
           <strong>Time:</strong> ${new Date(sale.createdAt).toLocaleTimeString()}
         </div>
       </div>
-      
+
       <div class="patient-info">
         <strong>Patient:</strong> ${sale.customerName}<br>
         <strong>Phone:</strong> ${customer?.phone || 'N/A'}
       </div>
-      
+
       <table class="items-table">
         <thead>
           <tr>
@@ -625,13 +620,13 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
             const strips = item.strips || 0;
             const extraTablets = item.extraTablets || 0;
             let quantityDisplay = `${totalTablets} tabs`;
-            
+
             if (strips > 0 && extraTablets > 0) {
               quantityDisplay = `${strips} strips + ${extraTablets} tabs`;
             } else if (strips > 0) {
               quantityDisplay = `${strips} strips`;
             }
-            
+
             return `
             <tr>
               <td>${item.medicineName}</td>
@@ -642,7 +637,7 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
           `}).join('')}
         </tbody>
       </table>
-      
+
       <div class="summary">
         <div class="summary-row">
           <span>Subtotal:</span>
@@ -661,7 +656,7 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
           <span>${sale.paymentMethod.toUpperCase()}</span>
         </div>
       </div>
-      
+
       <div class="footer">
         Thank you for visiting ${settings.clinicName}!<br>
         Get well soon!
@@ -673,10 +668,10 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     const customer = customers.find(c => c.id === sale.customerId);
     const medicineItems = sale.items.filter(item => !item.medicineId.startsWith('service-') && item.medicineId !== 'consultation') as CartItem[];
     const serviceItems = sale.items.filter(item => item.medicineId.startsWith('service-') || item.medicineId === 'consultation');
-    
+
     let totalBaseAmount = 0;
     let totalGstAmount = 0;
-    
+
     medicineItems.forEach(item => {
       const medicine = medicines.find(m => m.id === item.medicineId);
       if (medicine && medicine.sellingPriceGst > 0) {
@@ -691,7 +686,7 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
         totalBaseAmount += item.totalPrice;
       }
     });
-    
+
     serviceItems.forEach(item => {
       totalBaseAmount += item.totalPrice;
     });
@@ -711,7 +706,7 @@ License: ${settings.licenseNumber}
            MEDICAL BILL
 =====================================
 
-Bill No: ${sale.id.substring(0, 8)}
+Bill No: ${sale.id}
 Patient ID: ${sale.patientId}
 Date: ${new Date(sale.createdAt).toLocaleDateString()}
 Time: ${new Date(sale.createdAt).toLocaleTimeString()}
@@ -725,7 +720,7 @@ Address: ${customer?.address || 'N/A'}
 CONSULTATION SERVICES:
 =====================================
 
-${serviceItems.length > 0 ? serviceItems.map((item, index) => 
+${serviceItems.length > 0 ? serviceItems.map((item, index) =>
   `${index + 1}. ${item.medicineName}
    Qty: ${item.quantity} x ₹${item.unitPrice.toFixed(2)} = ₹${item.totalPrice.toFixed(2)}`
 ).join('\n\n') : 'No consultation services'}
@@ -735,15 +730,15 @@ ${medicineItems.length > 0 ? `
 MEDICINES:
 =====================================
 
-${medicineItems.map((item, index) => 
+${medicineItems.map((item, index) =>
   {
     const medicine = medicines.find(m => m.id === item.medicineId);
     const totalTablets = item.totalTablets || item.quantity;
     const strips = item.strips || 0;
     const extraTablets = item.extraTablets || 0;
-    
+
     let itemDetails = `${index + 1}. ${item.medicineName}`;
-    
+
     if (strips > 0 && extraTablets > 0) {
       itemDetails += `
    ${strips} strips × ${item.tabletsPerStrip} tablets = ${strips * item.tabletsPerStrip} tablets
@@ -756,11 +751,11 @@ ${medicineItems.map((item, index) =>
       itemDetails += `
    ${totalTablets} tablets`;
     }
-    
+
     itemDetails += `
    Rate: ₹${item.unitPrice.toFixed(2)} per tablet
    Total: ₹${item.totalPrice.toFixed(2)}`;
-    
+
     if (medicine && medicine.sellingPriceGst > 0) {
       const basePrice = medicine.sellingPrice ?? 0;
       const gstAmount = (basePrice * medicine.sellingPriceGst) / 100;
@@ -769,7 +764,7 @@ ${medicineItems.map((item, index) =>
       itemDetails += `
    (Base: ₹${basePricePerTablet.toFixed(2)}/tab + GST ${medicine.sellingPriceGst}%: ₹${gstAmountPerTablet.toFixed(2)}/tab)`;
     }
-    
+
     return itemDetails;
   }
 ).join('\n\n')}` : ''}
@@ -806,7 +801,6 @@ Get well soon!
 
   return (
     <div className="space-y-4">
-      {/* Compact Header */}
       <div className="flex justify-between items-center">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
@@ -827,11 +821,9 @@ Get well soon!
         </button>
       </div>
 
-      {/* Enhanced Sales Form Modal */}
       {showForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg w-full max-w-6xl max-h-[95vh] overflow-hidden flex flex-col">
-            {/* Header */}
             <div className="flex justify-between items-center p-4 border-b bg-gray-50">
               <h3 className="text-lg font-semibold">New Sale</h3>
               <button
@@ -841,21 +833,18 @@ Get well soon!
                 <X className="h-5 w-5" />
               </button>
             </div>
-            
-            {/* Alert */}
+
             {customerReentryAlert && (
               <div className="mx-4 mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
                 <p className="text-sm font-medium text-yellow-800">{customerReentryAlert}</p>
               </div>
             )}
-            
+
             <div className="flex flex-1 overflow-hidden">
-              {/* Left Panel - Patient, Services & Medicines */}
               <div className="flex-1 p-4 overflow-y-auto border-r">
-                {/* Patient Selection */}
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Patient</label>
-                  
+
                   {selectedCustomer ? (
                     <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
                       <div className="flex items-center justify-between">
@@ -907,7 +896,6 @@ Get well soon!
                   )}
                 </div>
 
-                {/* Enhanced Multiple Services Selection */}
                 {settings.consultationServices && settings.consultationServices.length > 0 && (
                   <div className="mb-6">
                     <div className="flex items-center justify-between mb-3">
@@ -924,13 +912,13 @@ Get well soon!
                         <span>{showServiceCustomization ? 'Simple' : 'Customize'}</span>
                       </button>
                     </div>
-                    
+
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {settings.consultationServices.map(service => {
                           const isSelected = isServiceSelected(service.id);
                           const selectedService = getSelectedService(service.id);
-                          
+
                           return (
                             <div
                               key={service.id}
@@ -958,7 +946,7 @@ Get well soon!
                                     )}
                                   </div>
                                 </div>
-                                
+
                                 {isSelected && (
                                   <div className="text-right">
                                     <span className="text-sm font-bold text-blue-600">
@@ -1004,7 +992,7 @@ Get well soon!
                           );
                         })}
                       </div>
-                      
+
                       {selectedServices.length > 0 && !showServiceCustomization && (
                         <div className="mt-3 pt-3 border-t border-blue-200">
                           <div className="flex justify-between text-sm">
@@ -1017,7 +1005,6 @@ Get well soon!
                   </div>
                 )}
 
-                {/* Enhanced Medicines with Strip/Tablet Options */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Add Medicines</label>
                   <div className="relative mb-2">
@@ -1030,7 +1017,7 @@ Get well soon!
                       className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
                     />
                   </div>
-                  
+
                   <div className="max-h-64 overflow-y-auto border border-gray-300 rounded-lg">
                     {filteredMedicines.filter(m => getAvailableQuantity(m.id) > 0).map(medicine => {
                       const availableQty = getAvailableQuantity(medicine.id);
@@ -1040,7 +1027,7 @@ Get well soon!
                       const availableStrips = getAvailableStrips(medicine.id);
                       const availableExtraTablets = getAvailableExtraTablets(medicine.id);
                       const currentInput = medicineInputs[medicine.id] || { strips: '', extraTablets: '' };
-                      
+
                       return (
                         <div key={medicine.id} className="p-3 border-b border-gray-200 hover:bg-gray-50">
                           <div className="flex justify-between items-start mb-2">
@@ -1081,7 +1068,7 @@ Get well soon!
                               </div>
                             </div>
                           </div>
-                          
+
                           <div className="grid grid-cols-3 gap-2 items-end">
                             <div>
                               <label className="text-xs text-gray-500">Strips</label>
@@ -1112,7 +1099,7 @@ Get well soon!
                                 const strips = parseInt(currentInput.strips) || 0;
                                 const extraTablets = parseInt(currentInput.extraTablets) || 0;
                                 const totalTablets = (strips * tabletsPerStrip) + extraTablets;
-                                
+
                                 if (totalTablets > 0 && totalTablets <= availableQty) {
                                   addToCart(medicine, strips, extraTablets);
                                 }
@@ -1123,7 +1110,7 @@ Get well soon!
                               Add
                             </button>
                           </div>
-                          
+
                           <div className="mt-2 text-xs text-gray-500">
                             Max: {availableStrips} strips + {availableExtraTablets} tablets = {availableQty} total tablets
                           </div>
@@ -1134,28 +1121,25 @@ Get well soon!
                 </div>
               </div>
 
-              {/* Right Panel - Cart & Billing */}
               <div className="w-80 p-4 bg-gray-50 overflow-y-auto">
                 <h4 className="font-medium text-gray-900 mb-3">Cart & Billing</h4>
-                
-                {/* Enhanced Cart Items */}
+
                 <div className="mb-4">
                   <div className="flex justify-between items-center mb-2">
                     <h5 className="font-medium text-gray-900 text-sm">Cart Items</h5>
                     <button
                       onClick={() => setEditMode(!editMode)}
                       className={`px-2 py-1 text-xs rounded ${
-                        editMode 
-                          ? 'bg-green-100 text-green-700 hover:bg-green-200' 
+                        editMode
+                          ? 'bg-green-100 text-green-700 hover:bg-green-200'
                           : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
                       }`}
                     >
                       {editMode ? 'Done' : 'Edit'}
                     </button>
                   </div>
-                  
+
                   <div className="max-h-64 overflow-y-auto border border-gray-300 rounded-lg bg-white">
-                    {/* Selected Services */}
                     {selectedServices.map(selectedService => (
                       <div key={selectedService.service.id} className="p-2 border-b border-gray-200 bg-blue-50">
                         <div className="flex justify-between items-center">
@@ -1204,8 +1188,7 @@ Get well soon!
                         </div>
                       </div>
                     ))}
-                    
-                    {/* Medicine Cart Items with Enhanced Display */}
+
                     {cartItems.map(item => (
                       <div key={item.medicineId} className="p-2 border-b border-gray-200 flex justify-between items-center">
                         <div className="flex-1">
@@ -1280,14 +1263,13 @@ Get well soon!
                         </div>
                       </div>
                     ))}
-                    
+
                     {cartItems.length === 0 && selectedServices.length === 0 && (
                       <p className="p-4 text-gray-500 text-center text-sm">No items in cart</p>
                     )}
                   </div>
                 </div>
 
-                {/* Enhanced Billing Summary */}
                 <div className="bg-white p-3 rounded-lg border border-gray-300 mb-4">
                   <div className="space-y-2 text-sm">
                     {servicesTotal > 0 && (
@@ -1325,7 +1307,7 @@ Get well soon!
                       <span>₹{finalAmount.toFixed(2)}</span>
                     </div>
                   </div>
-                  
+
                   <div className="mt-3">
                     <label className="block text-xs font-medium text-gray-700 mb-1">Payment</label>
                     <select
@@ -1340,7 +1322,6 @@ Get well soon!
                   </div>
                 </div>
 
-                {/* Action Buttons */}
                 <div className="space-y-2">
                   <button
                     onClick={handleSubmit}
@@ -1362,11 +1343,9 @@ Get well soon!
         </div>
       )}
 
-      {/* Enhanced Bill Modal */}
       {showBill && currentBill && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg shadow-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            {/* Bill Header */}
             <div className="p-6 border-b border-gray-200">
               <div className="flex justify-between items-start">
                 <h3 className="text-lg font-semibold">Bill Details</h3>
@@ -1405,14 +1384,12 @@ Get well soon!
               </div>
             </div>
 
-            {/* Enhanced Bill Content */}
             <div className="p-6">
-              {/* Bill Info */}
               <div className="grid grid-cols-2 gap-4 mb-6">
                 <div>
                   <p className="text-sm text-gray-600">Bill No:</p>
-                  <p className="font-semibold">{currentBill.id.substring(0, 8)}</p>
-                  <p className="text-sm text-gray-600">Patient ID:</p>
+                  <p className="font-semibold">{currentBill.id}</p>
+                  <p className="text-sm text-gray-600 mt-2">Patient ID:</p>
                   <p className="font-semibold">{currentBill.patientId}</p>
                 </div>
                 <div className="text-right">
@@ -1423,7 +1400,6 @@ Get well soon!
                 </div>
               </div>
 
-              {/* Patient Info */}
               <div className="mb-6">
                 <h4 className="font-semibold mb-2">Patient Details</h4>
                 <div className="grid grid-cols-2 gap-4">
@@ -1438,7 +1414,6 @@ Get well soon!
                 </div>
               </div>
 
-              {/* Enhanced Items Table with Service Separation */}
               <div className="mb-6">
                 <h4 className="font-semibold mb-3">Services & Items</h4>
                 <div className="overflow-x-auto">
@@ -1457,13 +1432,13 @@ Get well soon!
                         const isService = item.medicineId.startsWith('service-') || item.medicineId === 'consultation';
                         const cartItem = !isService ? cartItems.find(ci => ci.medicineId === item.medicineId) : null;
                         const medicine = !isService ? medicines.find(m => m.id === item.medicineId) : null;
-                        
+
                         return (
                           <tr key={index}>
                             <td className="px-4 py-2 text-sm">
                               <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                                isService 
-                                  ? 'bg-blue-100 text-blue-800' 
+                                isService
+                                  ? 'bg-blue-100 text-blue-800'
                                   : 'bg-green-100 text-green-800'
                               }`}>
                                 {isService ? (
@@ -1503,22 +1478,20 @@ Get well soon!
                 </div>
               </div>
 
-              {/* Enhanced Bill Summary */}
               <div className="border-t border-gray-200 pt-4">
                 <div className="flex justify-end">
                   <div className="w-64 space-y-2">
                     {(() => {
-                      // Separate services and medicines for summary
-                      const serviceItems = currentBill.items.filter(item => 
+                      const serviceItems = currentBill.items.filter(item =>
                         item.medicineId.startsWith('service-') || item.medicineId === 'consultation'
                       );
-                      const medicineItems = currentBill.items.filter(item => 
+                      const medicineItems = currentBill.items.filter(item =>
                         !item.medicineId.startsWith('service-') && item.medicineId !== 'consultation'
                       );
-                      
+
                       const servicesTotal = serviceItems.reduce((sum, item) => sum + item.totalPrice, 0);
                       const medicinesTotal = medicineItems.reduce((sum, item) => sum + item.totalPrice, 0);
-                      
+
                       return (
                         <>
                           {servicesTotal > 0 && (
@@ -1547,7 +1520,7 @@ Get well soon!
                       <span className="text-sm">Discount:</span>
                       <span className="text-sm">₹{currentBill.discount.toFixed(2)}</span>
                     </div>
-                    <div className="flex justify-between font-bold border-t pt-2">
+                    <div className="flex justify-between font-bold text-base border-t pt-2">
                       <span className="text-lg">Total:</span>
                       <span className="text-lg">₹{currentBill.finalAmount.toFixed(2)}</span>
                     </div>
@@ -1559,12 +1532,11 @@ Get well soon!
                 </div>
               </div>
             </div>
-            
-            {/* SMS Status */}
+
             {smsStatus.show && (
               <div className={`mx-6 mb-4 p-3 rounded-lg border flex items-center space-x-2 ${
-                smsStatus.success 
-                  ? 'bg-green-50 border-green-200 text-green-800' 
+                smsStatus.success
+                  ? 'bg-green-50 border-green-200 text-green-800'
                   : 'bg-red-50 border-red-200 text-red-800'
               }`}>
                 {smsStatus.success ? (
@@ -1579,7 +1551,6 @@ Get well soon!
         </div>
       )}
 
-      {/* Enhanced Sales List */}
       <div className="bg-white rounded-lg shadow">
         <div className="p-4 border-b border-gray-200">
           <h3 className="text-lg font-semibold text-gray-900">Recent Sales</h3>
@@ -1588,7 +1559,7 @@ Get well soon!
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sale ID</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Bill No</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Patient</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Items</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Services</th>
@@ -1600,15 +1571,15 @@ Get well soon!
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredSales.slice(0, 10).reverse().map((sale) => {
-                const serviceCount = sale.items.filter(item => 
+                const serviceCount = sale.items.filter(item =>
                   item.medicineId.startsWith('service-') || item.medicineId === 'consultation'
                 ).length;
                 const medicineCount = sale.items.length - serviceCount;
-                
+
                 return (
                   <tr key={sale.id} className="hover:bg-gray-50">
                     <td className="px-4 py-3 text-sm font-medium text-gray-900">
-                      #{sale.id.substring(0, 8)}
+                      {sale.id}
                     </td>
                     <td className="px-4 py-3">
                       <div>

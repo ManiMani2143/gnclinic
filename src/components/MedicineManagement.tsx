@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, Search, AlertTriangle, ChevronDown, X, RefreshCw, Calculator, CreditCard } from 'lucide-react';
+import { Plus, CreditCard as Edit, Trash2, Search, AlertTriangle, ChevronDown, X, RefreshCw, Calculator } from 'lucide-react';
 import { Medicine, PaymentMethod } from '../types';
 
 interface MedicineManagementProps {
@@ -55,22 +55,21 @@ const UNIT_TYPES = [
   { value: 'other', label: 'Other' }
 ];
 
-// Common HSN codes for medicines
 const COMMON_HSN_CODES = [
-  '30049099', // Other medicaments (general)
-  '30041000', // Penicillins
-  '30042000', // Streptomycins
-  '30043100', // Insulin
-  '30043200', // Corticosteroid hormones
-  '30044000', // Alkaloids
-  '30045000', // Vitamins
-  '30046000', // Provitamins and vitamins
-  '30049011', // Ayurvedic medicines
-  '30049012', // Unani medicines
-  '30049013', // Homoeopathic medicines
-  '30049014', // Siddha medicines
-  '30049015', // Bio-chemic medicines
-  '30049019', // Other traditional medicines
+  '30049099',
+  '30041000',
+  '30042000',
+  '30043100',
+  '30043200',
+  '30044000',
+  '30045000',
+  '30046000',
+  '30049011',
+  '30049012',
+  '30049013',
+  '30049014',
+  '30049015',
+  '30049019',
 ];
 
 type MedicineFormInput = Omit<Medicine, 'id' | 'createdAt'>;
@@ -120,41 +119,49 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
     sellingPricePerTablet: 0,
   });
 
-  // Calculate total quantity and prices when unit values change
   useEffect(() => {
-    const totalTablets = (formData.strips * formData.tabletsPerStrip) + formData.tablets;
-    const totalQuantity = formData.unitType === 'tablets' ? totalTablets : formData.strips;
-    
-    // Calculate per-tablet rates
-    const purchaseRatePerTablet = formData.purchaseRatePerStrip > 0 && formData.tabletsPerStrip > 0 
-      ? formData.purchaseRatePerStrip / formData.tabletsPerStrip 
-      : 0;
-    
-    const sellingPricePerTablet = formData.sellingPricePerStrip > 0 && formData.tabletsPerStrip > 0 
-      ? formData.sellingPricePerStrip / formData.tabletsPerStrip 
-      : 0;
+    if (formData.unitType === 'tablets') {
+      const totalTablets = (formData.strips * formData.tabletsPerStrip) + formData.tablets;
+      const purchaseRatePerTablet = formData.purchaseRatePerStrip > 0 && formData.tabletsPerStrip > 0
+        ? formData.purchaseRatePerStrip / formData.tabletsPerStrip
+        : 0;
 
-    // Calculate total prices with GST
-    const costGstAmount = (formData.purchaseRatePerStrip * formData.costPriceGst) / 100;
-    const sellingGstAmount = (formData.sellingPricePerStrip * formData.sellingPriceGst) / 100;
-    
-    setFormData(prev => ({
-      ...prev,
-      quantity: totalQuantity,
-      purchaseRatePerTablet,
-      sellingPricePerTablet,
-      totalCostPrice: prev.purchaseRatePerStrip + costGstAmount,
-      totalSellingPrice: prev.sellingPricePerStrip + sellingGstAmount,
-      costPrice: prev.purchaseRatePerStrip,
-      sellingPrice: prev.sellingPricePerStrip,
-    }));
+      const sellingPricePerTablet = formData.sellingPricePerStrip > 0 && formData.tabletsPerStrip > 0
+        ? formData.sellingPricePerStrip / formData.tabletsPerStrip
+        : 0;
+
+      const costGstAmount = (formData.purchaseRatePerStrip * formData.costPriceGst) / 100;
+      const sellingGstAmount = (formData.sellingPricePerStrip * formData.sellingPriceGst) / 100;
+
+      setFormData(prev => ({
+        ...prev,
+        quantity: totalTablets,
+        purchaseRatePerTablet,
+        sellingPricePerTablet,
+        totalCostPrice: prev.purchaseRatePerStrip + costGstAmount,
+        totalSellingPrice: prev.sellingPricePerStrip + sellingGstAmount,
+        costPrice: prev.purchaseRatePerStrip,
+        sellingPrice: prev.sellingPricePerStrip,
+      }));
+    } else {
+      const costGstAmount = (formData.costPrice * formData.costPriceGst) / 100;
+      const sellingGstAmount = (formData.sellingPrice * formData.sellingPriceGst) / 100;
+
+      setFormData(prev => ({
+        ...prev,
+        totalCostPrice: prev.costPrice + costGstAmount,
+        totalSellingPrice: prev.sellingPrice + sellingGstAmount,
+      }));
+    }
   }, [
-    formData.strips, 
-    formData.tablets, 
-    formData.tabletsPerStrip, 
+    formData.strips,
+    formData.tablets,
+    formData.tabletsPerStrip,
     formData.unitType,
     formData.purchaseRatePerStrip,
     formData.sellingPricePerStrip,
+    formData.costPrice,
+    formData.sellingPrice,
     formData.costPriceGst,
     formData.sellingPriceGst
   ]);
@@ -326,7 +333,6 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex justify-between items-center">
         <div className="flex items-center space-x-4">
           <div className="relative">
@@ -356,7 +362,6 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
         </button>
       </div>
 
-      {/* Medicine Form Modal */}
       {showForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-5xl max-h-[90vh] overflow-y-auto">
@@ -372,9 +377,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
               </button>
             </div>
             <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Basic Information */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {/* Category with Search */}
                 <div className="relative">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Category *
@@ -399,8 +402,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                     >
                       <ChevronDown className="h-4 w-4" />
                     </button>
-                    
-                    {/* Category Dropdown */}
+
                     {showCategoryDropdown && (
                       <div className="absolute z-20 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-48 overflow-y-auto">
                         {filteredCategories.length > 0 ? (
@@ -423,8 +425,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                     )}
                   </div>
                 </div>
-                
-                {/* Medicine Name */}
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Medicine Name *
@@ -438,8 +439,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
-                
-                {/* Unit Type */}
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Unit Type *
@@ -458,8 +458,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                     <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4 pointer-events-none" />
                   </div>
                 </div>
-                
-                {/* Brand with Autocomplete */}
+
                 <div className="relative">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Brand *
@@ -481,8 +480,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                       placeholder="Type brand name..."
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     />
-                    
-                    {/* Brand Suggestions */}
+
                     {showBrandSuggestions && brandSuggestions.length > 0 && (
                       <div className="absolute z-20 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-32 overflow-y-auto">
                         {brandSuggestions.map((brand, index) => (
@@ -502,8 +500,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                     )}
                   </div>
                 </div>
-                
-                {/* HSN Code */}
+
                 <div className="relative">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     HSN Code *
@@ -526,8 +523,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                       maxLength={10}
                     />
-                    
-                    {/* HSN Code Suggestions */}
+
                     {showHsnSuggestions && filteredHsnCodes.length > 0 && (
                       <div className="absolute z-20 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-40 overflow-y-auto">
                         {filteredHsnCodes.map((code, index) => (
@@ -548,7 +544,6 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                   </p>
                 </div>
 
-                {/* Payment Method */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Payment Method *
@@ -568,7 +563,6 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                   </div>
                 </div>
 
-                {/* Tablets per Strip */}
                 {formData.unitType === 'tablets' && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -584,7 +578,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                     />
                   </div>
                 )}
-                
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Batch Number *
@@ -610,11 +604,10 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                   />
                 </div>
 
-                {/* Stock Information */}
                 <div className="col-span-full border-t pt-4">
                   <h4 className="text-lg font-medium text-gray-900 mb-4">Stock Information</h4>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {formData.unitType === 'tablets' && (
+                    {formData.unitType === 'tablets' ? (
                       <>
                         <div>
                           <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -640,23 +633,36 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                           />
                         </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Total Quantity
+                          </label>
+                          <div className="flex items-center bg-gray-50 border border-gray-300 rounded-lg px-3 py-2">
+                            <span className="text-gray-700 font-medium">
+                              {formData.quantity} {formData.unitType}
+                            </span>
+                            <span className="ml-2 text-xs text-gray-500">
+                              ({formData.strips} strips + {formData.tablets} tablets)
+                            </span>
+                          </div>
+                        </div>
                       </>
-                    )}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Total Quantity
-                      </label>
-                      <div className="flex items-center bg-gray-50 border border-gray-300 rounded-lg px-3 py-2">
-                        <span className="text-gray-700 font-medium">
-                          {formData.quantity} {formData.unitType}
-                        </span>
-                        {formData.unitType === 'tablets' && (
-                          <span className="ml-2 text-xs text-gray-500">
-                            ({formData.strips} strips + {formData.tablets} tablets)
-                          </span>
-                        )}
+                    ) : (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Quantity *
+                        </label>
+                        <input
+                          type="number"
+                          required
+                          min="0"
+                          value={formData.quantity}
+                          onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value) || 0 })}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                          placeholder={`Enter quantity in ${formData.unitType}`}
+                        />
                       </div>
-                    </div>
+                    )}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Min Stock Level *
@@ -687,34 +693,39 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                 </div>
               </div>
 
-              {/* Pricing Section */}
               <div className="border-t pt-6">
                 <div className="flex items-center mb-4">
                   <Calculator className="h-5 w-5 text-blue-600 mr-2" />
                   <h4 className="text-lg font-medium text-gray-900">Pricing Information</h4>
                 </div>
-                
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Cost Price Section */}
                   <div className="bg-gray-50 p-4 rounded-lg space-y-4">
                     <h5 className="font-medium text-gray-900">Purchase Price Details</h5>
-                    
+
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Purchase Rate per Strip (₹) *
+                        {formData.unitType === 'tablets' ? 'Purchase Rate per Strip (₹) *' : `Purchase Rate per ${formData.unitType.slice(0, -1)} (₹) *`}
                       </label>
                       <input
                         type="number"
                         required
                         min="0"
                         step="0.01"
-                        value={formData.purchaseRatePerStrip}
-                        onChange={(e) => setFormData({ ...formData, purchaseRatePerStrip: parseFloat(e.target.value) || 0 })}
+                        value={formData.unitType === 'tablets' ? formData.purchaseRatePerStrip : formData.costPrice}
+                        onChange={(e) => {
+                          const value = parseFloat(e.target.value) || 0;
+                          if (formData.unitType === 'tablets') {
+                            setFormData({ ...formData, purchaseRatePerStrip: value });
+                          } else {
+                            setFormData({ ...formData, costPrice: value });
+                          }
+                        }}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                         placeholder="0.00"
                       />
                     </div>
-                    
+
                     {formData.unitType === 'tablets' && (
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -727,7 +738,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                         </div>
                       </div>
                     )}
-                    
+
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         GST % on Purchase
@@ -743,42 +754,51 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                         placeholder="0.00"
                       />
                     </div>
-                    
+
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Total Purchase Price (incl. GST)
                       </label>
                       <div className="flex items-center bg-green-100 border border-green-200 rounded-lg px-3 py-2">
                         <span className="text-green-700 font-medium">
-                          ₹{formData.totalCostPrice.toFixed(2)} per strip
+                          ₹{formData.totalCostPrice.toFixed(2)} {formData.unitType === 'tablets' ? 'per strip' : `per ${formData.unitType.slice(0, -1)}`}
                         </span>
                         <span className="ml-2 text-xs text-green-600">
-                          (GST: ₹{((formData.purchaseRatePerStrip * formData.costPriceGst) / 100).toFixed(2)})
+                          (GST: ₹{(formData.unitType === 'tablets'
+                            ? (formData.purchaseRatePerStrip * formData.costPriceGst) / 100
+                            : (formData.costPrice * formData.costPriceGst) / 100
+                          ).toFixed(2)})
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Selling Price Section */}
                   <div className="bg-blue-50 p-4 rounded-lg space-y-4">
                     <h5 className="font-medium text-gray-900">Selling Price Details</h5>
-                    
+
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Selling Price per Strip (₹) *
+                        {formData.unitType === 'tablets' ? 'Selling Price per Strip (₹) *' : `Selling Price per ${formData.unitType.slice(0, -1)} (₹) *`}
                       </label>
                       <input
                         type="number"
                         required
                         min="0"
                         step="0.01"
-                        value={formData.sellingPricePerStrip}
-                        onChange={(e) => setFormData({ ...formData, sellingPricePerStrip: parseFloat(e.target.value) || 0 })}
+                        value={formData.unitType === 'tablets' ? formData.sellingPricePerStrip : formData.sellingPrice}
+                        onChange={(e) => {
+                          const value = parseFloat(e.target.value) || 0;
+                          if (formData.unitType === 'tablets') {
+                            setFormData({ ...formData, sellingPricePerStrip: value });
+                          } else {
+                            setFormData({ ...formData, sellingPrice: value });
+                          }
+                        }}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                         placeholder="0.00"
                       />
                     </div>
-                    
+
                     {formData.unitType === 'tablets' && (
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -791,7 +811,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                         </div>
                       </div>
                     )}
-                    
+
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         GST % on Selling
@@ -807,28 +827,32 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                         placeholder="0.00"
                       />
                     </div>
-                    
+
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Total Selling Price (incl. GST)
                       </label>
                       <div className="flex items-center bg-blue-100 border border-blue-200 rounded-lg px-3 py-2">
                         <span className="text-blue-700 font-medium">
-                          ₹{formData.totalSellingPrice.toFixed(2)} per strip
+                          ₹{formData.totalSellingPrice.toFixed(2)} {formData.unitType === 'tablets' ? 'per strip' : `per ${formData.unitType.slice(0, -1)}`}
                         </span>
                         <span className="ml-2 text-xs text-blue-600">
-                          (GST: ₹{((formData.sellingPricePerStrip * formData.sellingPriceGst) / 100).toFixed(2)})
+                          (GST: ₹{(formData.unitType === 'tablets'
+                            ? (formData.sellingPricePerStrip * formData.sellingPriceGst) / 100
+                            : (formData.sellingPrice * formData.sellingPriceGst) / 100
+                          ).toFixed(2)})
                         </span>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Profit Margin Display */}
                 {formData.totalSellingPrice > 0 && formData.totalCostPrice > 0 && (
                   <div className="mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
                     <div className="flex items-center justify-between">
-                      <span className="text-purple-700 font-medium">Profit Margin per Strip:</span>
+                      <span className="text-purple-700 font-medium">
+                        Profit Margin per {formData.unitType === 'tablets' ? 'Strip' : formData.unitType.slice(0, -1).charAt(0).toUpperCase() + formData.unitType.slice(1, -1)}:
+                      </span>
                       <div className="text-right">
                         <span className="text-purple-900 font-semibold">
                           ₹{(formData.totalSellingPrice - formData.totalCostPrice).toFixed(2)}
@@ -858,7 +882,6 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                 )}
               </div>
 
-              {/* Submit Buttons */}
               <div className="flex justify-end space-x-3 mt-6">
                 <button
                   type="button"
@@ -879,7 +902,6 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
         </div>
       )}
 
-      {/* Medicines Table */}
       <div className="overflow-x-auto bg-white shadow-md rounded-lg">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
@@ -917,10 +939,10 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                     {medicine.quantity} {medicine.unitType}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
-                    ₹{medicine.purchaseRatePerStrip.toFixed(2)}
+                    ₹{(medicine.unitType === 'tablets' ? medicine.purchaseRatePerStrip : medicine.costPrice).toFixed(2)}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
-                    ₹{medicine.sellingPricePerStrip.toFixed(2)}
+                    ₹{(medicine.unitType === 'tablets' ? medicine.sellingPricePerStrip : medicine.sellingPrice).toFixed(2)}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
                     {medicine.expiryDate}

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Save, Stethoscope, DollarSign, User, Building, Phone, Mail, MapPin, Plus, Edit, Trash2, Package, Settings as SettingsIcon, MessageSquare, RefreshCw, Download, Upload } from 'lucide-react';
+import { Save, Stethoscope, DollarSign, User, Building, Phone, Mail, MapPin, Plus, CreditCard as Edit, Trash2, Package, Settings as SettingsIcon, MessageSquare, RefreshCw, Download, Upload } from 'lucide-react';
+import { smsService, SMSConfig } from '../utils/sms';
 
 interface SettingsData {
   doctorConsultationCharge: number;
@@ -43,7 +44,6 @@ interface ConsultationService {
 interface SettingsProps {
   onSettingsChange: (settings: SettingsData) => void;
   onRefresh?: () => void;
-  currentSettings?: SettingsData;
 }
 
 const DEFAULT_CATEGORIES = [
@@ -69,7 +69,7 @@ const WORKING_DAYS = [
   'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'
 ];
 
-export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh, currentSettings }) => {
+export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh }) => {
   const [activeTab, setActiveTab] = useState('clinic');
   const [settings, setSettings] = useState<SettingsData>({
     doctorConsultationCharge: 200,
@@ -108,85 +108,148 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
   const [editingCategory, setEditingCategory] = useState<{ index: number; value: string } | null>(null);
   const [newService, setNewService] = useState({ name: '', amount: 0 });
   const [editingService, setEditingService] = useState<{ id: string; name: string; amount: number } | null>(null);
+  const [smsConfig, setSmsConfig] = useState<SMSConfig>({
+    apiKey: '',
+    senderId: 'CLINIC',
+    templateId: '',
+    enabled: false
+  });
   const [backupStatus, setBackupStatus] = useState<string>('');
   const [isBackingUp, setIsBackingUp] = useState(false);
 
-  // Load settings from localStorage and props
   useEffect(() => {
     const loadSettings = () => {
-      try {
-        const savedSettings = localStorage.getItem('clinic_settings');
-        if (savedSettings) {
+      const savedSettings = localStorage.getItem('clinic_settings');
+      if (savedSettings) {
+        try {
           const parsedSettings = JSON.parse(savedSettings);
-          
-          // Merge with defaults to ensure all fields exist
-          const mergedSettings = {
-            ...settings,
-            ...parsedSettings,
-            categories: parsedSettings.categories || [...DEFAULT_CATEGORIES],
+          console.log('Loaded settings from localStorage:', parsedSettings);
+
+          const mergedSettings: SettingsData = {
+            doctorConsultationCharge: parsedSettings.doctorConsultationCharge || 200,
             consultationServices: parsedSettings.consultationServices || [
               { id: '1', name: 'General Consultation', amount: 200, isDefault: true },
               { id: '2', name: 'Follow-up Consultation', amount: 150, isDefault: false },
               { id: '3', name: 'Emergency Consultation', amount: 500, isDefault: false }
-            ]
+            ],
+            clinicName: parsedSettings.clinicName || 'GN Clinic',
+            doctorName: parsedSettings.doctorName || 'Dr. Naveen Kumar',
+            clinicAddress: parsedSettings.clinicAddress || 'Kadaiyur Kangayam',
+            clinicPhone: parsedSettings.clinicPhone || '+91 9444855105',
+            clinicEmail: parsedSettings.clinicEmail || 'info@clinicpro.com',
+            licenseNumber: parsedSettings.licenseNumber || 'MED123456789',
+            categories: Array.isArray(parsedSettings.categories) ? parsedSettings.categories : [...DEFAULT_CATEGORIES],
+            taxRate: parsedSettings.taxRate || 0,
+            currency: parsedSettings.currency || 'INR',
+            businessHours: {
+              openTime: parsedSettings.businessHours?.openTime || '09:00',
+              closeTime: parsedSettings.businessHours?.closeTime || '18:00',
+              workingDays: parsedSettings.businessHours?.workingDays || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+            },
+            notifications: {
+              lowStockAlert: parsedSettings.notifications?.lowStockAlert ?? true,
+              expiryAlert: parsedSettings.notifications?.expiryAlert ?? true,
+              emailNotifications: parsedSettings.notifications?.emailNotifications ?? false
+            },
+            backup: {
+              autoBackup: parsedSettings.backup?.autoBackup ?? true,
+              backupFrequency: parsedSettings.backup?.backupFrequency || 'daily'
+            },
+            specialization: parsedSettings.specialization || '',
+            experience: parsedSettings.experience || '',
+            registrationNumber: parsedSettings.registrationNumber || '',
+            website: parsedSettings.website || ''
           };
-          
+
           setSettings(mergedSettings);
+          onSettingsChange(mergedSettings);
           return mergedSettings;
+        } catch (error) {
+          console.error('Error parsing saved settings:', error);
+          const defaultSettings = {
+            doctorConsultationCharge: 200,
+            consultationServices: [
+              { id: '1', name: 'General Consultation', amount: 200, isDefault: true },
+              { id: '2', name: 'Follow-up Consultation', amount: 150, isDefault: false },
+              { id: '3', name: 'Emergency Consultation', amount: 500, isDefault: false }
+            ],
+            clinicName: 'GN Clinic',
+            doctorName: 'Dr. Naveen Kumar',
+            clinicAddress: 'Kadaiyur Kangayam',
+            clinicPhone: '+91 9444855105',
+            clinicEmail: 'info@clinicpro.com',
+            licenseNumber: 'MED123456789',
+            categories: [...DEFAULT_CATEGORIES],
+            taxRate: 0,
+            currency: 'INR',
+            businessHours: {
+              openTime: '09:00',
+              closeTime: '18:00',
+              workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+            },
+            notifications: {
+              lowStockAlert: true,
+              expiryAlert: true,
+              emailNotifications: false
+            },
+            backup: {
+              autoBackup: true,
+              backupFrequency: 'daily'
+            }
+          };
+          localStorage.setItem('clinic_settings', JSON.stringify(defaultSettings));
+          setSettings(defaultSettings);
+          onSettingsChange(defaultSettings);
+          return defaultSettings;
         }
-      } catch (error) {
-        console.error('Error loading settings:', error);
+      } else {
+        console.log('No saved settings found, using defaults');
+        localStorage.setItem('clinic_settings', JSON.stringify(settings));
+        onSettingsChange(settings);
+        return settings;
       }
-      return settings;
     };
 
-    const loadedSettings = loadSettings();
-    
-    // If currentSettings prop is provided, use it (for synchronization)
-    if (currentSettings) {
-      setSettings(currentSettings);
-    } else {
-      onSettingsChange(loadedSettings);
-    }
-  }, [currentSettings]);
+    loadSettings();
+
+    const savedSmsConfig = smsService.getConfig();
+    setSmsConfig(savedSmsConfig);
+  }, []);
 
   const handleSave = () => {
-    try {
-      // Update localStorage
-      localStorage.setItem('clinic_settings', JSON.stringify(settings));
-      
-      // Notify parent component
-      onSettingsChange(settings);
-      
-      // Show success message
-      setIsSaved(true);
-      setTimeout(() => setIsSaved(false), 3000);
-      
-      console.log('Settings saved successfully:', settings);
-    } catch (error) {
-      console.error('Error saving settings:', error);
-      alert('Error saving settings. Please try again.');
-    }
+    console.log('Saving settings:', settings);
+    localStorage.setItem('clinic_settings', JSON.stringify(settings));
+    smsService.updateConfig(smsConfig);
+    onSettingsChange(settings);
+    setIsSaved(true);
+    setTimeout(() => setIsSaved(false), 3000);
   };
 
   const handleInputChange = (field: keyof SettingsData, value: any) => {
+    console.log(`Changing ${field} to:`, value);
     setSettings(prev => {
-      const updatedSettings = {
+      const newSettings = {
         ...prev,
         [field]: value
       };
-      return updatedSettings;
+      console.log('New settings state:', newSettings);
+      return newSettings;
     });
   };
 
   const handleNestedInputChange = (parent: keyof SettingsData, field: string, value: any) => {
-    setSettings(prev => ({
-      ...prev,
-      [parent]: {
-        ...(prev[parent] as any),
-        [field]: value
-      }
-    }));
+    console.log(`Changing ${parent}.${field} to:`, value);
+    setSettings(prev => {
+      const newSettings = {
+        ...prev,
+        [parent]: {
+          ...(prev[parent] as any),
+          [field]: value
+        }
+      };
+      console.log('New settings state:', newSettings);
+      return newSettings;
+    });
   };
 
   const addCategory = () => {
@@ -196,11 +259,10 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
         ...settings,
         categories: updatedCategories
       };
-      
+      console.log('Adding category:', newCategory.trim());
+      console.log('Updated categories:', updatedCategories);
       setSettings(updatedSettings);
       setNewCategory('');
-      
-      // Auto-save when adding category
       localStorage.setItem('clinic_settings', JSON.stringify(updatedSettings));
       onSettingsChange(updatedSettings);
     }
@@ -214,11 +276,9 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
         ...settings,
         categories: updatedCategories
       };
-      
+      console.log('Editing category at index', index, 'to:', newValue.trim());
       setSettings(updatedSettings);
       setEditingCategory(null);
-      
-      // Auto-save when editing category
       localStorage.setItem('clinic_settings', JSON.stringify(updatedSettings));
       onSettingsChange(updatedSettings);
     }
@@ -230,10 +290,9 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
       ...settings,
       categories: updatedCategories
     };
-    
+    console.log('Deleting category at index', index);
+    console.log('Remaining categories:', updatedCategories);
     setSettings(updatedSettings);
-    
-    // Auto-save when deleting category
     localStorage.setItem('clinic_settings', JSON.stringify(updatedSettings));
     onSettingsChange(updatedSettings);
   };
@@ -243,10 +302,8 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
       ...settings,
       categories: [...DEFAULT_CATEGORIES]
     };
-    
+    console.log('Resetting categories to default');
     setSettings(updatedSettings);
-    
-    // Auto-save when resetting categories
     localStorage.setItem('clinic_settings', JSON.stringify(updatedSettings));
     onSettingsChange(updatedSettings);
   };
@@ -256,17 +313,16 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
       alert('Please enter a service name');
       return;
     }
-    
+
     if (newService.amount <= 0) {
       alert('Please enter a valid amount greater than 0');
       return;
     }
 
-    // Check if service name already exists
     const existingService = settings.consultationServices.find(
       service => service.name.toLowerCase() === newService.name.trim().toLowerCase()
     );
-    
+
     if (existingService) {
       alert('A service with this name already exists');
       return;
@@ -278,17 +334,17 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
       amount: Number(newService.amount),
       isDefault: settings.consultationServices.length === 0
     };
-    
+
     const updatedServices = [...settings.consultationServices, newServiceObj];
     const updatedSettings = {
       ...settings,
       consultationServices: updatedServices
     };
-    
+
+    console.log('Adding service:', newServiceObj);
     setSettings(updatedSettings);
     setNewService({ name: '', amount: 0 });
-    
-    // Auto-save when adding service
+
     localStorage.setItem('clinic_settings', JSON.stringify(updatedSettings));
     onSettingsChange(updatedSettings);
   };
@@ -298,17 +354,16 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
       alert('Please enter a service name');
       return;
     }
-    
+
     if (amount <= 0) {
       alert('Please enter a valid amount greater than 0');
       return;
     }
 
-    // Check if service name already exists (excluding current service)
     const existingService = settings.consultationServices.find(
       service => service.id !== id && service.name.toLowerCase() === name.trim().toLowerCase()
     );
-    
+
     if (existingService) {
       alert('A service with this name already exists');
       return;
@@ -317,16 +372,16 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
     const updatedServices = settings.consultationServices.map(service =>
       service.id === id ? { ...service, name: name.trim(), amount: Number(amount) } : service
     );
-    
+
     const updatedSettings = {
       ...settings,
       consultationServices: updatedServices
     };
-    
+
+    console.log('Editing service:', id, 'to:', { name: name.trim(), amount });
     setSettings(updatedSettings);
     setEditingService(null);
-    
-    // Auto-save when editing service
+
     localStorage.setItem('clinic_settings', JSON.stringify(updatedSettings));
     onSettingsChange(updatedSettings);
   };
@@ -340,20 +395,20 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
     if (window.confirm('Are you sure you want to delete this consultation service?')) {
       const serviceToDelete = settings.consultationServices.find(s => s.id === id);
       let remainingServices = settings.consultationServices.filter(s => s.id !== id);
-      
+
       if (serviceToDelete?.isDefault && remainingServices.length > 0) {
-        // If deleting default service, make the first remaining service default
         remainingServices[0].isDefault = true;
       }
-      
+
       const updatedSettings = {
         ...settings,
         consultationServices: remainingServices
       };
-      
+
+      console.log('Deleting service:', id);
+      console.log('Remaining services:', remainingServices);
       setSettings(updatedSettings);
-      
-      // Auto-save when deleting service
+
       localStorage.setItem('clinic_settings', JSON.stringify(updatedSettings));
       onSettingsChange(updatedSettings);
     }
@@ -364,26 +419,24 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
       ...service,
       isDefault: service.id === id
     }));
-    
+
     const updatedSettings = {
       ...settings,
       consultationServices: updatedServices
     };
-    
+
+    console.log('Setting default service to:', id);
     setSettings(updatedSettings);
-    
-    // Auto-save when setting default service
+
     localStorage.setItem('clinic_settings', JSON.stringify(updatedSettings));
     onSettingsChange(updatedSettings);
   };
 
-  // Backup functionality
   const createBackup = async () => {
     try {
       setIsBackingUp(true);
       setBackupStatus('Creating backup...');
 
-      // Gather all data for backup
       const backupData = {
         settings: settings,
         medicines: JSON.parse(localStorage.getItem('medicines') || '[]'),
@@ -393,22 +446,19 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
         version: '1.0'
       };
 
-      // Create downloadable backup file
       const dataStr = JSON.stringify(backupData, null, 2);
       const dataBlob = new Blob([dataStr], { type: 'application/json' });
       const url = URL.createObjectURL(dataBlob);
-      
-      // Create download link
+
       const link = document.createElement('a');
       link.href = url;
       link.download = `clinic-backup-${new Date().toISOString().split('T')[0]}.json`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      
-      // Cleanup
+
       URL.revokeObjectURL(url);
-      
+
       setBackupStatus('Backup created successfully!');
       setTimeout(() => setBackupStatus(''), 3000);
     } catch (error) {
@@ -424,24 +474,29 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (file.type !== 'application/json') {
+    if (!file.name.endsWith('.json')) {
       alert('Please select a valid backup file (.json)');
+      event.target.value = '';
       return;
     }
 
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const backupData = JSON.parse(e.target?.result as string);
-        
-        // Validate backup data structure
-        if (!backupData.settings || !backupData.backupDate) {
-          alert('Invalid backup file format');
+        const content = e.target?.result as string;
+        const backupData = JSON.parse(content);
+
+        if (!backupData.settings || !backupData.backupDate || !backupData.version) {
+          alert('Invalid backup file format. Please select a valid backup file.');
+          event.target.value = '';
           return;
         }
 
-        if (window.confirm('This will restore all data from the backup file. Current data will be replaced. Continue?')) {
-          // Restore all data
+        const confirmMessage = `This will restore all data from the backup created on ${new Date(backupData.backupDate).toLocaleString()}.\n\nCurrent data will be replaced. This action cannot be undone.\n\nDo you want to continue?`;
+
+        if (window.confirm(confirmMessage)) {
+          console.log('Restoring backup data:', backupData);
+
           if (backupData.settings) {
             localStorage.setItem('clinic_settings', JSON.stringify(backupData.settings));
             setSettings(backupData.settings);
@@ -457,30 +512,42 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
             localStorage.setItem('sales', JSON.stringify(backupData.sales));
           }
 
-          setBackupStatus('Data restored successfully! Please refresh the page to see changes.');
+          setBackupStatus('Data restored successfully! Refreshing page...');
+
           setTimeout(() => {
-            setBackupStatus('');
             window.location.reload();
-          }, 3000);
+          }, 2000);
+        } else {
+          event.target.value = '';
         }
       } catch (error) {
         console.error('Restore failed:', error);
-        alert('Failed to restore backup. Please check the file format.');
+        alert('Failed to restore backup. The file may be corrupted or in an invalid format.');
+        event.target.value = '';
       }
     };
-    
+
+    reader.onerror = () => {
+      alert('Failed to read the backup file. Please try again.');
+      event.target.value = '';
+    };
+
     reader.readAsText(file);
   };
 
   const handleRefresh = () => {
-    // Reload settings from localStorage
     const savedSettings = localStorage.getItem('clinic_settings');
     if (savedSettings) {
-      const parsedSettings = JSON.parse(savedSettings);
-      setSettings(parsedSettings);
-      onSettingsChange(parsedSettings);
+      try {
+        const parsedSettings = JSON.parse(savedSettings);
+        console.log('Refreshing settings:', parsedSettings);
+        setSettings(parsedSettings);
+        onSettingsChange(parsedSettings);
+      } catch (error) {
+        console.error('Error refreshing settings:', error);
+      }
     }
-    
+
     if (onRefresh) {
       onRefresh();
     }
@@ -491,6 +558,7 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
     { id: 'categories', label: 'Categories', icon: Package },
     { id: 'services', label: 'Services', icon: Stethoscope },
     { id: 'billing', label: 'Billing', icon: DollarSign },
+    { id: 'sms', label: 'SMS Settings', icon: MessageSquare },
     { id: 'business', label: 'Business Hours', icon: SettingsIcon },
     { id: 'notifications', label: 'Notifications', icon: Stethoscope },
     { id: 'backup', label: 'Backup', icon: Save },
@@ -498,7 +566,6 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="bg-white rounded-lg shadow p-6">
         <div className="flex justify-between items-center mb-4">
           <div className="flex items-center space-x-3">
@@ -537,14 +604,13 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
           </div>
         )}
 
-        {/* Tab Navigation */}
         <div className="border-b border-gray-200">
-          <nav className="-mb-px flex space-x-8">
+          <nav className="-mb-px flex space-x-8 overflow-x-auto">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
+                className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 whitespace-nowrap ${
                   activeTab === tab.id
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -558,16 +624,20 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
         </div>
       </div>
 
-      {/* Tab Content */}
       <div className="bg-white rounded-lg shadow">
-        {/* Clinic Information Tab */}
         {activeTab === 'clinic' && (
           <div className="p-6">
             <h3 className="text-lg font-semibold text-gray-900 mb-6 flex items-center">
               <Building className="h-5 w-5 mr-2 text-blue-600" />
               Clinic Information
             </h3>
-            
+            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <h4 className="font-medium text-blue-900 mb-2">Clinic Configuration</h4>
+              <p className="text-sm text-blue-800">
+                Update your clinic's basic information, contact details, and professional credentials.
+                These details will appear on bills, reports, and official documents.
+              </p>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -582,6 +652,7 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="ClinicPro Medical Center"
                 />
+                <p className="text-xs text-gray-500 mt-1">This name will appear on all bills and reports</p>
               </div>
 
               <div>
@@ -597,6 +668,7 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="Dr. John Smith"
                 />
+                <p className="text-xs text-gray-500 mt-1">Primary doctor's name for prescriptions</p>
               </div>
 
               <div className="md:col-span-2">
@@ -612,6 +684,7 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="123 Medical Street, Health City, State - 123456"
                 />
+                <p className="text-xs text-gray-500 mt-1">Complete address including postal code</p>
               </div>
 
               <div>
@@ -627,6 +700,7 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="+91 9876543210"
                 />
+                <p className="text-xs text-gray-500 mt-1">Primary contact number for patients</p>
               </div>
 
               <div>
@@ -642,6 +716,7 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="info@clinicpro.com"
                 />
+                <p className="text-xs text-gray-500 mt-1">Official email for correspondence</p>
               </div>
 
               <div className="md:col-span-2">
@@ -657,12 +732,66 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   placeholder="MED123456789"
                 />
+                <p className="text-xs text-gray-500 mt-1">Official medical practice license number</p>
+              </div>
+
+              <div className="md:col-span-2 mt-6 pt-6 border-t border-gray-200">
+                <h4 className="font-medium text-gray-900 mb-4">Additional Information</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Specialization
+                    </label>
+                    <input
+                      type="text"
+                      value={settings.specialization || ''}
+                      onChange={(e) => handleInputChange('specialization', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="General Medicine, Cardiology, etc."
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Years of Experience
+                    </label>
+                    <input
+                      type="text"
+                      value={settings.experience || ''}
+                      onChange={(e) => handleInputChange('experience', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="Years"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Registration Number
+                    </label>
+                    <input
+                      type="text"
+                      value={settings.registrationNumber || ''}
+                      onChange={(e) => handleInputChange('registrationNumber', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="Medical Council Registration"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Website
+                    </label>
+                    <input
+                      type="url"
+                      value={settings.website || ''}
+                      onChange={(e) => handleInputChange('website', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      placeholder="https://www.yourclinic.com"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* Categories Management Tab */}
         {activeTab === 'categories' && (
           <div className="p-6">
             <div className="flex justify-between items-center mb-6">
@@ -678,7 +807,6 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
               </button>
             </div>
 
-            {/* Add New Category */}
             <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
               <h4 className="font-medium text-blue-900 mb-3">Add New Category</h4>
               <div className="flex space-x-3">
@@ -701,9 +829,8 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
               </div>
             </div>
 
-            {/* Categories List */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {settings.categories.map((category, index) => (
+              {settings.categories && settings.categories.map((category, index) => (
                 <div key={index} className="bg-gray-50 p-4 rounded-lg border border-gray-200">
                   {editingCategory?.index === index ? (
                     <div className="flex space-x-2">
@@ -744,22 +871,358 @@ export const Settings: React.FC<SettingsProps> = ({ onSettingsChange, onRefresh,
                 </div>
               ))}
             </div>
+
+            <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-sm text-yellow-800">
+                <strong>Note:</strong> Categories are used in medicine management. Deleting a category won't affect existing medicines, but new medicines won't be able to use deleted categories.
+              </p>
+            </div>
           </div>
         )}
 
-        {/* Other tabs remain the same */}
-        {/* ... (other tab contents) ... */}
-      </div>
+        {activeTab === 'services' && (
+          <div className="p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+                <Stethoscope className="h-5 w-5 mr-2 text-blue-600" />
+                Consultation Services
+              </h3>
+            </div>
 
-      {/* Save Button */}
-      <div className="flex justify-end">
-        <button
-          onClick={handleSave}
-          className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 flex items-center space-x-2 transition-colors"
-        >
-          <Save className="h-5 w-5" />
-          <span>Save All Settings</span>
-        </button>
+            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <h4 className="font-medium text-blue-900 mb-2">Service Management</h4>
+              <p className="text-sm text-blue-800">
+                Configure different consultation services with custom names and pricing.
+                These services will be available when creating sales bills and can be selected
+                instead of the default consultation charge.
+              </p>
+            </div>
+
+            <div className="mb-6 p-4 bg-green-50 rounded-lg border border-green-200">
+              <h4 className="font-medium text-green-900 mb-3">Add New Service</h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <input
+                  type="text"
+                  value={newService.name}
+                  onChange={(e) => setNewService({ ...newService, name: e.target.value })}
+                  placeholder="Service name (e.g., Specialist Consultation)"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
+                />
+                <input
+                  type="number"
+                  value={newService.amount}
+                  onChange={(e) => setNewService({ ...newService, amount: Number(e.target.value) })}
+                  placeholder="Amount"
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
+                />
+                <button
+                  onClick={addConsultationService}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center justify-center space-x-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>Add Service</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {settings.consultationServices.map((service) => (
+                <div key={service.id} className="flex justify-between items-center bg-gray-50 p-4 rounded-lg border border-gray-200">
+                  {editingService?.id === service.id ? (
+                    <div className="flex w-full space-x-2">
+                      <input
+                        type="text"
+                        value={editingService.name}
+                        onChange={(e) => setEditingService({ ...editingService, name: e.target.value })}
+                        className="flex-1 px-2 py-1 border border-gray-300 rounded"
+                      />
+                      <input
+                        type="number"
+                        value={editingService.amount}
+                        onChange={(e) => setEditingService({ ...editingService, amount: Number(e.target.value) })}
+                        className="w-24 px-2 py-1 border border-gray-300 rounded"
+                      />
+                      <button
+                        onClick={() => editConsultationService(service.id, editingService.name, editingService.amount)}
+                        className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => setEditingService(null)}
+                        className="px-3 py-1 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2">
+                          <p className="font-medium text-gray-900">{service.name}</p>
+                          {service.isDefault && (
+                            <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded">
+                              Default
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-600">₹{service.amount}</p>
+                      </div>
+                      <div className="flex space-x-2">
+                        <button
+                          onClick={() => setEditingService(service)}
+                          className="text-blue-600 hover:text-blue-800 p-2"
+                          title="Edit service"
+                        >
+                          <Edit className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => deleteConsultationService(service.id)}
+                          className="text-red-600 hover:text-red-800 p-2"
+                          title="Delete service"
+                          disabled={settings.consultationServices.length <= 1}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                        {!service.isDefault && (
+                          <button
+                            onClick={() => setDefaultService(service.id)}
+                            className="px-3 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
+                            title="Set as default service"
+                          >
+                            Set Default
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'billing' && (
+          <div className="p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-6 flex items-center">
+              <DollarSign className="h-5 w-5 mr-2 text-blue-600" />
+              Billing Settings
+            </h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Default Consultation Charge (₹)</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={settings.doctorConsultationCharge}
+                  onChange={(e) => handleInputChange('doctorConsultationCharge', Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Tax Rate (%)</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  value={settings.taxRate}
+                  onChange={(e) => handleInputChange('taxRate', Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Currency</label>
+                <input
+                  type="text"
+                  value={settings.currency}
+                  onChange={(e) => handleInputChange('currency', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'sms' && (
+          <div className="p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-6 flex items-center">
+              <MessageSquare className="h-5 w-5 mr-2 text-blue-600" />
+              SMS Settings
+            </h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">API Key</label>
+                <input
+                  type="text"
+                  value={smsConfig.apiKey}
+                  onChange={(e) => setSmsConfig({ ...smsConfig, apiKey: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  placeholder="Enter your SMS API key"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Sender ID</label>
+                <input
+                  type="text"
+                  value={smsConfig.senderId}
+                  onChange={(e) => setSmsConfig({ ...smsConfig, senderId: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  placeholder="CLINIC"
+                />
+              </div>
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="smsEnabled"
+                  checked={smsConfig.enabled}
+                  onChange={(e) => setSmsConfig({ ...smsConfig, enabled: e.target.checked })}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="smsEnabled" className="text-sm font-medium text-gray-700">Enable SMS Notifications</label>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'business' && (
+          <div className="p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-6 flex items-center">
+              <SettingsIcon className="h-5 w-5 mr-2 text-blue-600" />
+              Business Hours
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Opening Time</label>
+                <input
+                  type="time"
+                  value={settings.businessHours.openTime}
+                  onChange={(e) => handleNestedInputChange('businessHours', 'openTime', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Closing Time</label>
+                <input
+                  type="time"
+                  value={settings.businessHours.closeTime}
+                  onChange={(e) => handleNestedInputChange('businessHours', 'closeTime', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'notifications' && (
+          <div className="p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-6 flex items-center">
+              <Stethoscope className="h-5 w-5 mr-2 text-blue-600" />
+              Notifications
+            </h3>
+            <div className="space-y-3">
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={settings.notifications.lowStockAlert}
+                  onChange={(e) => handleNestedInputChange('notifications', 'lowStockAlert', e.target.checked)}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm font-medium text-gray-700">Enable Low Stock Alert</span>
+              </label>
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={settings.notifications.expiryAlert}
+                  onChange={(e) => handleNestedInputChange('notifications', 'expiryAlert', e.target.checked)}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm font-medium text-gray-700">Enable Expiry Alert</span>
+              </label>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'backup' && (
+          <div className="p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-6 flex items-center">
+              <Save className="h-5 w-5 mr-2 text-blue-600" />
+              Backup & Restore
+            </h3>
+
+            <div className="space-y-6">
+              <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <h4 className="font-medium text-blue-900 mb-2">About Backup</h4>
+                <p className="text-sm text-blue-800">
+                  Create a complete backup of your clinic data including settings, medicines, patients, and sales records.
+                  The backup file can be used to restore your data on this or another device.
+                </p>
+              </div>
+
+              <div className="border border-gray-200 rounded-lg p-4">
+                <h4 className="font-medium text-gray-900 mb-3 flex items-center">
+                  <Download className="h-4 w-4 mr-2" />
+                  Create Backup
+                </h4>
+                <p className="text-sm text-gray-600 mb-4">
+                  Download a backup file containing all your clinic data. Store this file in a safe location.
+                </p>
+                <button
+                  onClick={createBackup}
+                  disabled={isBackingUp}
+                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+                >
+                  <Download className="h-4 w-4" />
+                  <span>{isBackingUp ? 'Creating Backup...' : 'Download Backup'}</span>
+                </button>
+              </div>
+
+              <div className="border border-gray-200 rounded-lg p-4">
+                <h4 className="font-medium text-gray-900 mb-3 flex items-center">
+                  <Upload className="h-4 w-4 mr-2" />
+                  Restore Backup
+                </h4>
+                <p className="text-sm text-gray-600 mb-4">
+                  Upload a previously downloaded backup file to restore your data. This will replace all current data.
+                </p>
+                <div className="flex items-center space-x-4">
+                  <label className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 cursor-pointer flex items-center space-x-2">
+                    <Upload className="h-4 w-4" />
+                    <span>Select Backup File</span>
+                    <input
+                      type="file"
+                      accept=".json"
+                      onChange={restoreBackup}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <h4 className="font-medium text-yellow-900 mb-2">Important Notes</h4>
+                <ul className="text-sm text-yellow-800 space-y-1 list-disc list-inside">
+                  <li>Backup files contain sensitive data. Keep them secure.</li>
+                  <li>Restoring a backup will replace all current data.</li>
+                  <li>Create regular backups to prevent data loss.</li>
+                  <li>Backup files are in JSON format and can only be restored to this application.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="p-6 border-t border-gray-200">
+          <div className="flex justify-end">
+            <button
+              onClick={handleSave}
+              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center space-x-2 transition-colors"
+            >
+              <Save className="h-5 w-5" />
+              <span>Save Settings</span>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
