@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, CreditCard as Edit, Trash2, Search, AlertTriangle, ChevronDown, X, RefreshCw, Calculator } from 'lucide-react';
+import { Plus, CreditCard as Edit, Trash2, Search, AlertTriangle, ChevronDown, X, RefreshCw, Calculator, FileText } from 'lucide-react';
 import { Medicine, PaymentMethod } from '../types';
 
 interface MedicineManagementProps {
@@ -20,7 +20,7 @@ const COMMON_MEDICINES = {
   'Dermatology': ['Hydrocortisone', 'Clotrimazole', 'Ketoconazole', 'Calamine', 'Betamethasone'],
   'Diabetes': ['Metformin', 'Glimepiride', 'Insulin', 'Gliclazide', 'Pioglitazone'],
   'Gastroenterology': ['Loperamide', 'Ondansetron', 'Metoclopramide', 'Lactulose', 'Mesalamine'],
-  'Neurology': ['Phenytoin', 'Carbamazepine', 'Gabapentin', 'Levodopa', 'Diazepam'],
+  'Neurology': ['Phenytoin', 'Carbamazepam', 'Gabapentin', 'Levodopa', 'Diazepam'],
   'Ophthalmology': ['Tropicamide', 'Timolol', 'Ciprofloxacin Eye Drops', 'Prednisolone Eye Drops', 'Artificial Tears'],
   'Orthopedics': ['Calcium', 'Vitamin D3', 'Glucosamine', 'Methyl Salicylate', 'Diclofenac Gel'],
   'Pediatrics': ['Paracetamol Syrup', 'Amoxicillin Syrup', 'ORS', 'Zinc Syrup', 'Iron Syrup'],
@@ -42,6 +42,7 @@ const UNIT_TYPES = [
   { value: 'strips', label: 'Strips' },
   { value: 'bottles', label: 'Bottles' },
   { value: 'tubes', label: 'Tubes' },
+  { value: 'Pieces', label: 'Pieces' },
   { value: 'vials', label: 'Vials' },
   { value: 'ampoules', label: 'Ampoules' },
   { value: 'sachets', label: 'Sachets' },
@@ -73,6 +74,25 @@ const COMMON_HSN_CODES = [
 ];
 
 type MedicineFormInput = Omit<Medicine, 'id' | 'createdAt'>;
+
+const generateInvoiceNumber = (medicines: Medicine[]): string => {
+  const today = new Date();
+  const year = today.getFullYear().toString().slice(-2);
+  const month = (today.getMonth() + 1).toString().padStart(2, '0');
+  const prefix = `INV${year}${month}`;
+
+  const existingInvoices = medicines
+    .filter(m => m.invoiceNumber && m.invoiceNumber.startsWith(prefix))
+    .map(m => {
+      const match = m.invoiceNumber.match(/\d+$/);
+      return match ? parseInt(match[0]) : 0;
+    });
+
+  const maxNumber = existingInvoices.length > 0 ? Math.max(...existingInvoices) : 0;
+  const newNumber = (maxNumber + 1).toString().padStart(4, '0');
+
+  return `${prefix}${newNumber}`;
+};
 
 export const MedicineManagement: React.FC<MedicineManagementProps> = ({
   medicines,
@@ -117,6 +137,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
     purchaseRatePerTablet: 0,
     sellingPricePerStrip: 0,
     sellingPricePerTablet: 0,
+    invoiceNumber: '',
   });
 
   useEffect(() => {
@@ -198,7 +219,8 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
     medicine.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     medicine.brand.toLowerCase().includes(searchTerm.toLowerCase()) ||
     medicine.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    medicine.hsnCode.toLowerCase().includes(searchTerm.toLowerCase())
+    medicine.hsnCode.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (medicine.invoiceNumber && medicine.invoiceNumber.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   const filteredCategories = availableCategories.filter(category =>
@@ -235,6 +257,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
       purchaseRatePerTablet: 0,
       sellingPricePerStrip: 0,
       sellingPricePerTablet: 0,
+      invoiceNumber: '',
     });
     setEditingMedicine(null);
     setShowForm(false);
@@ -281,6 +304,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
       purchaseRatePerTablet: medicine.purchaseRatePerTablet || 0,
       sellingPricePerStrip: medicine.sellingPricePerStrip || 0,
       sellingPricePerTablet: medicine.sellingPricePerTablet || 0,
+      invoiceNumber: medicine.invoiceNumber || '',
     });
     setCategorySearchTerm(medicine.category);
     setBrandSearchTerm(medicine.brand);
@@ -303,6 +327,14 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
   const handleHsnCodeChange = (hsnCode: string) => {
     setFormData({ ...formData, hsnCode });
     setShowHsnSuggestions(false);
+  };
+
+  const handleFormOpen = () => {
+    setShowForm(true);
+    if (!editingMedicine) {
+      const newInvoiceNumber = generateInvoiceNumber(medicines);
+      setFormData(prev => ({ ...prev, invoiceNumber: newInvoiceNumber }));
+    }
   };
 
   const isExpired = (expiryDate: string) => new Date(expiryDate) < new Date();
@@ -339,7 +371,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
             <input
               type="text"
-              placeholder="Search medicines, HSN code..."
+              placeholder="Search medicines, invoice, HSN..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -354,7 +386,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
           </button>
         </div>
         <button
-          onClick={() => setShowForm(true)}
+          onClick={handleFormOpen}
           className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center space-x-2"
         >
           <Plus className="h-4 w-4" />
@@ -378,6 +410,26 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
             </div>
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Invoice Number *
+                  </label>
+                  <div className="relative">
+                    <FileText className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                    <input
+                      type="text"
+                      required
+                      value={formData.invoiceNumber}
+                      onChange={(e) => setFormData({ ...formData, invoiceNumber: e.target.value })}
+                      placeholder="Auto-generated"
+                      className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-gray-50 font-mono text-sm"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Auto-generated or enter custom invoice number
+                  </p>
+                </div>
+
                 <div className="relative">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Category *
@@ -906,6 +958,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
+              <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Invoice No.</th>
               <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Name</th>
               <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Brand</th>
               <th className="px-4 py-3 text-left text-sm font-medium text-gray-500">Category</th>
@@ -931,6 +984,9 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
                       : ''
                   }`}
                 >
+                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 font-mono">
+                    {medicine.invoiceNumber || '-'}
+                  </td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{medicine.name}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">{medicine.brand}</td>
                   <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">{medicine.category}</td>
@@ -987,7 +1043,7 @@ export const MedicineManagement: React.FC<MedicineManagementProps> = ({
             ) : (
               <tr>
                 <td
-                  colSpan={10}
+                  colSpan={11}
                   className="px-4 py-6 text-center text-gray-500 text-sm"
                 >
                   No medicines found

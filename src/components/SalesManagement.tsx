@@ -10,10 +10,12 @@ interface SelectedService {
 }
 
 interface CartItem extends SaleItem {
-  strips: number;
-  tabletsPerStrip: number;
-  totalTablets: number;
-  extraTablets?: number;
+  units: number;
+  itemsPerUnit: number;
+  totalItems: number;
+  extraItems?: number;
+  unitType: string;
+  itemType?: string;
 }
 
 interface SalesManagementProps {
@@ -23,6 +25,7 @@ interface SalesManagementProps {
   settings: SettingsData;
   onAddSale: (sale: Omit<Sale, 'createdAt'>, billNumber: string) => void;
   onUpdateMedicineStock: (medicineId: string, newQuantity: number) => void;
+  onDeleteSale: (saleId: string) => void;
   onRefresh?: () => void;
 }
 
@@ -33,6 +36,7 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
   settings,
   onAddSale,
   onUpdateMedicineStock,
+  onDeleteSale,
   onRefresh,
 }) => {
   const [showForm, setShowForm] = useState(false);
@@ -58,26 +62,54 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
   const [sendingSMS, setSendingSMS] = useState(false);
   const [editMode, setEditMode] = useState(false);
 
-  const [medicineInputs, setMedicineInputs] = useState<{ [key: string]: { strips: string; extraTablets: string } }>({});
+  const [medicineInputs, setMedicineInputs] = useState<{ [key: string]: { units: string; extraItems: string } }>({});
+
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [saleToDelete, setSaleToDelete] = useState<Sale | null>(null);
+
+  const getUnitType = (medicine: Medicine): string => {
+    if (medicine.unitType) {
+      return medicine.unitType.toLowerCase();
+    }
+
+    const tabletsPerStrip = medicine.tabletsPerStrip || 1;
+    if (tabletsPerStrip === 1) {
+      return 'unit';
+    }
+
+    return 'strip';
+  };
+
+  const getItemType = (medicine: Medicine): string => {
+    if (medicine.itemType) {
+      return medicine.itemType.toLowerCase();
+    }
+
+    const tabletsPerStrip = medicine.tabletsPerStrip || 1;
+    if (tabletsPerStrip === 1) {
+      return 'item';
+    }
+
+    return 'tablet';
+  };
 
   const generateBillNumber = (): string => {
-    // Find the highest existing bill number and increment it
     const existingBillNumbers = sales.map(sale => {
       const billNum = parseInt(sale.id);
       return isNaN(billNum) ? 0 : billNum;
     });
-    
-    const highestBillNumber = existingBillNumbers.length > 0 
-      ? Math.max(...existingBillNumbers) 
+
+    const highestBillNumber = existingBillNumbers.length > 0
+      ? Math.max(...existingBillNumbers)
       : 0;
-    
+
     return (highestBillNumber + 1).toString().padStart(2, '0');
   };
 
   useEffect(() => {
-    const initialInputs: { [key: string]: { strips: string; extraTablets: string } } = {};
+    const initialInputs: { [key: string]: { units: string; extraItems: string } } = {};
     medicines.forEach(medicine => {
-      initialInputs[medicine.id] = { strips: '', extraTablets: '' };
+      initialInputs[medicine.id] = { units: '', extraItems: '' };
     });
     setMedicineInputs(initialInputs);
   }, [medicines]);
@@ -87,23 +119,23 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     if (!medicine) return 0;
 
     const cartItem = cartItems.find(item => item.medicineId === medicineId);
-    const reservedQuantity = cartItem ? cartItem.totalTablets : 0;
+    const reservedQuantity = cartItem ? cartItem.totalItems : 0;
 
     return Math.max(0, medicine.quantity - reservedQuantity);
   };
 
-  const getAvailableStrips = (medicineId: string): number => {
+  const getAvailableUnits = (medicineId: string): number => {
     const availableQty = getAvailableQuantity(medicineId);
     const medicine = medicines.find(m => m.id === medicineId);
-    const tabletsPerStrip = medicine?.tabletsPerStrip || 1;
-    return Math.floor(availableQty / tabletsPerStrip);
+    const itemsPerUnit = medicine?.tabletsPerStrip || 1;
+    return Math.floor(availableQty / itemsPerUnit);
   };
 
-  const getAvailableExtraTablets = (medicineId: string): number => {
+  const getAvailableExtraItems = (medicineId: string): number => {
     const availableQty = getAvailableQuantity(medicineId);
     const medicine = medicines.find(m => m.id === medicineId);
-    const tabletsPerStrip = medicine?.tabletsPerStrip || 1;
-    return availableQty % tabletsPerStrip;
+    const itemsPerUnit = medicine?.tabletsPerStrip || 1;
+    return availableQty % itemsPerUnit;
   };
 
   const filteredSales = sales.filter(sale =>
@@ -210,35 +242,37 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     return selectedServices.find(s => s.service.id === serviceId);
   };
 
-  const addToCart = (medicine: Medicine, strips: number, extraTablets: number) => {
-    const tabletsPerStrip = medicine.tabletsPerStrip || 1;
-    const totalTablets = (strips * tabletsPerStrip) + extraTablets;
+  const addToCart = (medicine: Medicine, units: number, extraItems: number) => {
+    const itemsPerUnit = medicine.tabletsPerStrip || 1;
+    const totalItems = (units * itemsPerUnit) + extraItems;
     const availableQty = getAvailableQuantity(medicine.id);
 
-    if (totalTablets <= 0 || totalTablets > availableQty) return;
+    if (totalItems <= 0 || totalItems > availableQty) return;
 
     const existingItem = cartItems.find(item => item.medicineId === medicine.id);
-    const unitPricePerTablet = (medicine.totalSellingPrice ?? medicine.sellingPrice) / tabletsPerStrip;
+    const unitPricePerItem = (medicine.totalSellingPrice ?? medicine.sellingPrice) / itemsPerUnit;
+    const unitType = getUnitType(medicine);
+    const itemType = getItemType(medicine);
 
     if (existingItem) {
-      const newTotalTablets = existingItem.totalTablets + totalTablets;
-      if (newTotalTablets > medicine.quantity) return;
+      const newTotalItems = existingItem.totalItems + totalItems;
+      if (newTotalItems > medicine.quantity) return;
 
-      const newStrips = existingItem.strips + strips;
-      const newExtraTablets = (existingItem.extraTablets || 0) + extraTablets;
+      const newUnits = existingItem.units + units;
+      const newExtraItems = (existingItem.extraItems || 0) + extraItems;
 
-      const adjustedStrips = newStrips + Math.floor(newExtraTablets / tabletsPerStrip);
-      const adjustedExtraTablets = newExtraTablets % tabletsPerStrip;
+      const adjustedUnits = newUnits + Math.floor(newExtraItems / itemsPerUnit);
+      const adjustedExtraItems = newExtraItems % itemsPerUnit;
 
       setCartItems(cartItems.map(item =>
         item.medicineId === medicine.id
           ? {
               ...item,
-              strips: adjustedStrips,
-              extraTablets: adjustedExtraTablets,
-              totalTablets: newTotalTablets,
-              quantity: newTotalTablets,
-              totalPrice: newTotalTablets * unitPricePerTablet
+              units: adjustedUnits,
+              extraItems: adjustedExtraItems,
+              totalItems: newTotalItems,
+              quantity: newTotalItems,
+              totalPrice: newTotalItems * unitPricePerItem
             }
           : item
       ));
@@ -246,19 +280,21 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
       setCartItems([...cartItems, {
         medicineId: medicine.id,
         medicineName: medicine.name,
-        quantity: totalTablets,
-        strips: strips,
-        tabletsPerStrip: tabletsPerStrip,
-        totalTablets: totalTablets,
-        extraTablets: extraTablets,
-        unitPrice: unitPricePerTablet,
-        totalPrice: totalTablets * unitPricePerTablet,
+        quantity: totalItems,
+        units: units,
+        itemsPerUnit: itemsPerUnit,
+        totalItems: totalItems,
+        extraItems: extraItems,
+        unitPrice: unitPricePerItem,
+        totalPrice: totalItems * unitPricePerItem,
+        unitType: unitType,
+        itemType: itemType,
       }]);
     }
 
     setMedicineInputs(prev => ({
       ...prev,
-      [medicine.id]: { strips: '', extraTablets: '' }
+      [medicine.id]: { units: '', extraItems: '' }
     }));
   };
 
@@ -266,28 +302,28 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     setCartItems(cartItems.filter(item => item.medicineId !== medicineId));
   };
 
-  const updateCartQuantity = (medicineId: string, totalTablets: number) => {
-    if (totalTablets <= 0) {
+  const updateCartQuantity = (medicineId: string, totalItems: number) => {
+    if (totalItems <= 0) {
       removeFromCart(medicineId);
       return;
     }
 
     const medicine = medicines.find(m => m.id === medicineId);
-    if (!medicine || totalTablets > medicine.quantity) return;
+    if (!medicine || totalItems > medicine.quantity) return;
 
-    const tabletsPerStrip = medicine.tabletsPerStrip || 1;
-    const strips = Math.floor(totalTablets / tabletsPerStrip);
-    const extraTablets = totalTablets % tabletsPerStrip;
+    const itemsPerUnit = medicine.tabletsPerStrip || 1;
+    const units = Math.floor(totalItems / itemsPerUnit);
+    const extraItems = totalItems % itemsPerUnit;
 
     setCartItems(cartItems.map(item =>
       item.medicineId === medicineId
         ? {
             ...item,
-            strips,
-            extraTablets,
-            quantity: totalTablets,
-            totalTablets: totalTablets,
-            totalPrice: totalTablets * item.unitPrice
+            units,
+            extraItems,
+            quantity: totalItems,
+            totalItems: totalItems,
+            totalPrice: totalItems * item.unitPrice
           }
         : item
     ));
@@ -299,7 +335,7 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
         ? {
             ...item,
             unitPrice,
-            totalPrice: item.totalTablets * unitPrice
+            totalPrice: item.totalItems * unitPrice
           }
         : item
     ));
@@ -331,7 +367,7 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     });
 
     const newSale: Omit<Sale, 'createdAt'> = {
-      id: billNumber, // Use the generated bill number as ID
+      id: billNumber,
       customerId: selectedCustomer.id,
       customerName: selectedCustomer.name,
       patientId: selectedCustomer.patientId,
@@ -347,7 +383,7 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     cartItems.forEach(item => {
       const currentMedicine = medicines.find(m => m.id === item.medicineId);
       if (currentMedicine) {
-        onUpdateMedicineStock(item.medicineId, currentMedicine.quantity - item.totalTablets);
+        onUpdateMedicineStock(item.medicineId, currentMedicine.quantity - item.totalItems);
       }
     });
 
@@ -411,9 +447,9 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     setShowServiceCustomization(false);
     setCustomerReentryAlert(null);
 
-    const resetInputs: { [key: string]: { strips: string; extraTablets: string } } = {};
+    const resetInputs: { [key: string]: { units: string; extraItems: string } } = {};
     medicines.forEach(medicine => {
-      resetInputs[medicine.id] = { strips: '', extraTablets: '' };
+      resetInputs[medicine.id] = { units: '', extraItems: '' };
     });
     setMedicineInputs(resetInputs);
 
@@ -431,9 +467,46 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
   };
 
   const resendSMS = async () => {
-    if (currentBill && selectedCustomer) {
-      await sendBillSMS(currentBill, selectedCustomer);
+    if (currentBill) {
+      const customer = customers.find(c => c.id === currentBill.customerId);
+      if (customer) {
+        await sendBillSMS(currentBill, customer);
+      }
     }
+  };
+
+  const handleDeleteSale = (sale: Sale) => {
+    setSaleToDelete(sale);
+    setShowDeleteConfirm(true);
+  };
+
+  const confirmDelete = () => {
+    if (!saleToDelete) return;
+
+    saleToDelete.items.forEach(item => {
+      if (!item.medicineId.startsWith('service-') && item.medicineId !== 'consultation') {
+        const currentMedicine = medicines.find(m => m.id === item.medicineId);
+        if (currentMedicine) {
+          const cartItem = item as CartItem;
+          const quantityToRestore = cartItem.totalItems || item.quantity;
+          onUpdateMedicineStock(item.medicineId, currentMedicine.quantity + quantityToRestore);
+        }
+      }
+    });
+
+    onDeleteSale(saleToDelete.id);
+
+    setShowDeleteConfirm(false);
+    setSaleToDelete(null);
+
+    if (onRefresh) {
+      onRefresh();
+    }
+  };
+
+  const cancelDelete = () => {
+    setShowDeleteConfirm(false);
+    setSaleToDelete(null);
   };
 
   const printBill = () => {
@@ -616,22 +689,26 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
             </tr>
           `).join('')}
           ${medicineItems.map(item => {
-            const totalTablets = item.totalTablets || item.quantity;
-            const strips = item.strips || 0;
-            const extraTablets = item.extraTablets || 0;
-            let quantityDisplay = `${totalTablets} tabs`;
+            const medicine = medicines.find(m => m.id === item.medicineId);
+            const totalItems = item.totalItems || item.quantity;
+            const units = item.units || 0;
+            const extraItems = item.extraItems || 0;
+            const unitType = item.unitType || (medicine ? getUnitType(medicine) : 'unit');
+            const itemType = medicine ? getItemType(medicine) : 'item';
 
-            if (strips > 0 && extraTablets > 0) {
-              quantityDisplay = `${strips} strips + ${extraTablets} tabs`;
-            } else if (strips > 0) {
-              quantityDisplay = `${strips} strips`;
+            let quantityDisplay = `${totalItems} ${itemType}s`;
+
+            if (units > 0 && extraItems > 0) {
+              quantityDisplay = `${units} ${unitType}s + ${extraItems} ${itemType}s`;
+            } else if (units > 0) {
+              quantityDisplay = `${units} ${unitType}s`;
             }
 
             return `
             <tr>
               <td>${item.medicineName}</td>
               <td>${quantityDisplay}</td>
-              <td>₹${item.unitPrice.toFixed(2)}/tab</td>
+              <td>₹${item.unitPrice.toFixed(2)}/${itemType}</td>
               <td>₹${item.totalPrice.toFixed(2)}</td>
             </tr>
           `}).join('')}
@@ -677,11 +754,11 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
       if (medicine && medicine.sellingPriceGst > 0) {
         const basePrice = medicine.sellingPrice ?? 0;
         const gstAmount = (basePrice * medicine.sellingPriceGst) / 100;
-        const basePricePerTablet = basePrice / (medicine.tabletsPerStrip || 1);
-        const gstAmountPerTablet = gstAmount / (medicine.tabletsPerStrip || 1);
-        const totalTablets = item.totalTablets || item.quantity;
-        totalBaseAmount += basePricePerTablet * totalTablets;
-        totalGstAmount += gstAmountPerTablet * totalTablets;
+        const basePricePerItem = basePrice / (medicine.tabletsPerStrip || 1);
+        const gstAmountPerItem = gstAmount / (medicine.tabletsPerStrip || 1);
+        const totalItems = item.totalItems || item.quantity;
+        totalBaseAmount += basePricePerItem * totalItems;
+        totalGstAmount += gstAmountPerItem * totalItems;
       } else {
         totalBaseAmount += item.totalPrice;
       }
@@ -733,36 +810,38 @@ MEDICINES:
 ${medicineItems.map((item, index) =>
   {
     const medicine = medicines.find(m => m.id === item.medicineId);
-    const totalTablets = item.totalTablets || item.quantity;
-    const strips = item.strips || 0;
-    const extraTablets = item.extraTablets || 0;
+    const totalItems = item.totalItems || item.quantity;
+    const units = item.units || 0;
+    const extraItems = item.extraItems || 0;
+    const unitType = item.unitType || (medicine ? getUnitType(medicine) : 'unit');
+    const itemType = medicine ? getItemType(medicine) : 'item';
 
     let itemDetails = `${index + 1}. ${item.medicineName}`;
 
-    if (strips > 0 && extraTablets > 0) {
+    if (units > 0 && extraItems > 0) {
       itemDetails += `
-   ${strips} strips × ${item.tabletsPerStrip} tablets = ${strips * item.tabletsPerStrip} tablets
-   + ${extraTablets} extra tablets
-   Total: ${totalTablets} tablets`;
-    } else if (strips > 0) {
+   ${units} ${unitType}s × ${item.itemsPerUnit} ${itemType}s = ${units * item.itemsPerUnit} ${itemType}s
+   + ${extraItems} extra ${itemType}s
+   Total: ${totalItems} ${itemType}s`;
+    } else if (units > 0) {
       itemDetails += `
-   ${strips} strips × ${item.tabletsPerStrip} tablets = ${totalTablets} tablets`;
+   ${units} ${unitType}s × ${item.itemsPerUnit} ${itemType}s = ${totalItems} ${itemType}s`;
     } else {
       itemDetails += `
-   ${totalTablets} tablets`;
+   ${totalItems} ${itemType}s`;
     }
 
     itemDetails += `
-   Rate: ₹${item.unitPrice.toFixed(2)} per tablet
+   Rate: ₹${item.unitPrice.toFixed(2)} per ${itemType}
    Total: ₹${item.totalPrice.toFixed(2)}`;
 
     if (medicine && medicine.sellingPriceGst > 0) {
       const basePrice = medicine.sellingPrice ?? 0;
       const gstAmount = (basePrice * medicine.sellingPriceGst) / 100;
-      const basePricePerTablet = basePrice / (medicine.tabletsPerStrip || 1);
-      const gstAmountPerTablet = gstAmount / (medicine.tabletsPerStrip || 1);
+      const basePricePerItem = basePrice / (medicine.tabletsPerStrip || 1);
+      const gstAmountPerItem = gstAmount / (medicine.tabletsPerStrip || 1);
       itemDetails += `
-   (Base: ₹${basePricePerTablet.toFixed(2)}/tab + GST ${medicine.sellingPriceGst}%: ₹${gstAmountPerTablet.toFixed(2)}/tab)`;
+   (Base: ₹${basePricePerItem.toFixed(2)}/${itemType} + GST ${medicine.sellingPriceGst}%: ₹${gstAmountPerItem.toFixed(2)}/${itemType})`;
     }
 
     return itemDetails;
@@ -789,7 +868,7 @@ Get well soon!
     `;
   };
 
-  const updateMedicineInput = (medicineId: string, field: 'strips' | 'extraTablets', value: string) => {
+  const updateMedicineInput = (medicineId: string, field: 'units' | 'extraItems', value: string) => {
     setMedicineInputs(prev => ({
       ...prev,
       [medicineId]: {
@@ -1022,11 +1101,13 @@ Get well soon!
                     {filteredMedicines.filter(m => getAvailableQuantity(m.id) > 0).map(medicine => {
                       const availableQty = getAvailableQuantity(medicine.id);
                       const cartItem = cartItems.find(item => item.medicineId === medicine.id);
-                      const tabletsPerStrip = medicine.tabletsPerStrip || 1;
-                      const pricePerTablet = (medicine.totalSellingPrice ?? medicine.sellingPrice) / tabletsPerStrip;
-                      const availableStrips = getAvailableStrips(medicine.id);
-                      const availableExtraTablets = getAvailableExtraTablets(medicine.id);
-                      const currentInput = medicineInputs[medicine.id] || { strips: '', extraTablets: '' };
+                      const itemsPerUnit = medicine.tabletsPerStrip || 1;
+                      const pricePerItem = (medicine.totalSellingPrice ?? medicine.sellingPrice) / itemsPerUnit;
+                      const availableUnits = getAvailableUnits(medicine.id);
+                      const availableExtraItems = getAvailableExtraItems(medicine.id);
+                      const currentInput = medicineInputs[medicine.id] || { units: '', extraItems: '' };
+                      const unitType = getUnitType(medicine);
+                      const itemType = getItemType(medicine);
 
                       return (
                         <div key={medicine.id} className="p-3 border-b border-gray-200 hover:bg-gray-50">
@@ -1036,25 +1117,25 @@ Get well soon!
                               <p className="text-xs text-gray-600">{medicine.brand}</p>
                               <div className="flex items-center space-x-2 text-xs text-gray-500 mt-1">
                                 <Package className="h-3 w-3" />
-                                <span>{tabletsPerStrip} tablets/strip</span>
+                                <span>{itemsPerUnit} {itemType}s/{unitType}</span>
                               </div>
                               {cartItem && (
                                 <p className="text-xs text-blue-600 font-medium">
-                                  In cart: {cartItem.totalTablets} tablets
-                                  {cartItem.strips > 0 && ` (${cartItem.strips} strips`}
-                                  {cartItem.extraTablets > 0 && ` + ${cartItem.extraTablets} tablets)`}
-                                  {cartItem.strips > 0 && cartItem.extraTablets === 0 && ')'}
+                                  In cart: {cartItem.totalItems} {itemType}s
+                                  {cartItem.units > 0 && ` (${cartItem.units} ${unitType}s`}
+                                  {cartItem.extraItems > 0 && ` + ${cartItem.extraItems} ${itemType}s)`}
+                                  {cartItem.units > 0 && cartItem.extraItems === 0 && ')'}
                                 </p>
                               )}
                             </div>
                             <div className="text-right">
-                              <span className="text-sm font-bold text-green-600">₹{pricePerTablet.toFixed(2)}/tab</span>
+                              <span className="text-sm font-bold text-green-600">₹{pricePerItem.toFixed(2)}/{itemType}</span>
                               <div className="text-xs text-gray-500">
-                                Strip: ₹{(medicine.totalSellingPrice ?? medicine.sellingPrice ?? 0).toFixed(2)}
+                                {unitType}: ₹{(medicine.totalSellingPrice ?? medicine.sellingPrice ?? 0).toFixed(2)}
                               </div>
                               {medicine.sellingPriceGst > 0 && (
                                 <div className="text-xs text-gray-500">
-                                  Base: ₹{((medicine.sellingPrice ?? 0) / tabletsPerStrip).toFixed(2)}/tab + GST({medicine.sellingPriceGst}%)
+                                  Base: ₹{((medicine.sellingPrice ?? 0) / itemsPerUnit).toFixed(2)}/{itemType} + GST({medicine.sellingPriceGst}%)
                                 </div>
                               )}
                               <div className="space-y-1">
@@ -1063,7 +1144,7 @@ Get well soon!
                                     ? 'bg-orange-100 text-orange-800'
                                     : 'bg-green-100 text-green-800'
                                 }`}>
-                                  Available: {availableStrips} strips + {availableExtraTablets} tabs
+                                  Available: {availableUnits} {unitType}s + {availableExtraItems} {itemType}s
                                 </div>
                               </div>
                             </div>
@@ -1071,37 +1152,37 @@ Get well soon!
 
                           <div className="grid grid-cols-3 gap-2 items-end">
                             <div>
-                              <label className="text-xs text-gray-500">Strips</label>
+                              <label className="text-xs text-gray-500 capitalize">{unitType}s</label>
                               <input
                                 type="number"
                                 min="0"
-                                max={availableStrips}
-                                value={currentInput.strips}
-                                onChange={(e) => updateMedicineInput(medicine.id, 'strips', e.target.value)}
+                                max={availableUnits}
+                                value={currentInput.units}
+                                onChange={(e) => updateMedicineInput(medicine.id, 'units', e.target.value)}
                                 placeholder="0"
                                 className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
                               />
                             </div>
                             <div>
-                              <label className="text-xs text-gray-500">Extra Tablets</label>
+                              <label className="text-xs text-gray-500 capitalize">Extra {itemType}s</label>
                               <input
                                 type="number"
                                 min="0"
-                                max={availableExtraTablets}
-                                value={currentInput.extraTablets}
-                                onChange={(e) => updateMedicineInput(medicine.id, 'extraTablets', e.target.value)}
+                                max={availableExtraItems}
+                                value={currentInput.extraItems}
+                                onChange={(e) => updateMedicineInput(medicine.id, 'extraItems', e.target.value)}
                                 placeholder="0"
                                 className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
                               />
                             </div>
                             <button
                               onClick={() => {
-                                const strips = parseInt(currentInput.strips) || 0;
-                                const extraTablets = parseInt(currentInput.extraTablets) || 0;
-                                const totalTablets = (strips * tabletsPerStrip) + extraTablets;
+                                const units = parseInt(currentInput.units) || 0;
+                                const extraItems = parseInt(currentInput.extraItems) || 0;
+                                const totalItems = (units * itemsPerUnit) + extraItems;
 
-                                if (totalTablets > 0 && totalTablets <= availableQty) {
-                                  addToCart(medicine, strips, extraTablets);
+                                if (totalItems > 0 && totalItems <= availableQty) {
+                                  addToCart(medicine, units, extraItems);
                                 }
                               }}
                               disabled={availableQty === 0}
@@ -1112,7 +1193,7 @@ Get well soon!
                           </div>
 
                           <div className="mt-2 text-xs text-gray-500">
-                            Max: {availableStrips} strips + {availableExtraTablets} tablets = {availableQty} total tablets
+                            Max: {availableUnits} {unitType}s + {availableExtraItems} {itemType}s = {availableQty} total {itemType}s
                           </div>
                         </div>
                       );
@@ -1189,80 +1270,86 @@ Get well soon!
                       </div>
                     ))}
 
-                    {cartItems.map(item => (
-                      <div key={item.medicineId} className="p-2 border-b border-gray-200 flex justify-between items-center">
-                        <div className="flex-1">
-                          <p className="text-sm font-medium">{item.medicineName}</p>
-                          {editMode ? (
-                            <div className="flex items-center space-x-1 mt-1">
-                              <span className="text-xs">₹</span>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={item.unitPrice || ''}
-                                onChange={(e) => updateCartItemPrice(item.medicineId, parseFloat(e.target.value) || 0)}
-                                className="w-12 px-1 py-0.5 border border-gray-300 rounded text-xs text-center"
-                              />
-                              <span className="text-xs">x</span>
-                              <input
-                                type="number"
-                                min="1"
-                                max={medicines.find(m => m.id === item.medicineId)?.quantity || 1}
-                                value={item.totalTablets || ''}
-                                onChange={(e) => updateCartQuantity(item.medicineId, parseInt(e.target.value) || 1)}
-                                className="w-10 px-1 py-0.5 border border-gray-300 rounded text-xs text-center"
-                              />
-                              <span className="text-xs">tabs</span>
-                            </div>
-                          ) : (
-                            <div className="text-xs text-gray-600">
-                              {item.strips > 0 && item.extraTablets > 0 ? (
-                                <div>
-                                  <div>{item.strips} strips × {item.tabletsPerStrip} = {item.strips * item.tabletsPerStrip} tablets</div>
-                                  <div>+ {item.extraTablets} extra tablets</div>
-                                  <div>Total: {item.totalTablets} tablets</div>
-                                  <div>₹{item.unitPrice.toFixed(2)}/tablet</div>
-                                </div>
-                              ) : item.strips > 0 ? (
-                                <div>
-                                  <div>{item.strips} strips × {item.tabletsPerStrip} = {item.totalTablets} tablets</div>
-                                  <div>₹{item.unitPrice.toFixed(2)}/tablet</div>
-                                </div>
-                              ) : (
-                                <div>₹{item.unitPrice.toFixed(2)}/tablet × {item.totalTablets} tablets</div>
-                              )}
-                            </div>
-                          )}
+                    {cartItems.map(item => {
+                      const medicine = medicines.find(m => m.id === item.medicineId);
+                      const unitType = item.unitType || (medicine ? getUnitType(medicine) : 'unit');
+                      const itemType = item.itemType || (medicine ? getItemType(medicine) : 'item');
+
+                      return (
+                        <div key={item.medicineId} className="p-2 border-b border-gray-200 flex justify-between items-center">
+                          <div className="flex-1">
+                            <p className="text-sm font-medium">{item.medicineName}</p>
+                            {editMode ? (
+                              <div className="flex items-center space-x-1 mt-1">
+                                <span className="text-xs">₹</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={item.unitPrice || ''}
+                                  onChange={(e) => updateCartItemPrice(item.medicineId, parseFloat(e.target.value) || 0)}
+                                  className="w-12 px-1 py-0.5 border border-gray-300 rounded text-xs text-center"
+                                />
+                                <span className="text-xs">x</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max={medicines.find(m => m.id === item.medicineId)?.quantity || 1}
+                                  value={item.totalItems || ''}
+                                  onChange={(e) => updateCartQuantity(item.medicineId, parseInt(e.target.value) || 1)}
+                                  className="w-10 px-1 py-0.5 border border-gray-300 rounded text-xs text-center"
+                                />
+                                <span className="text-xs">{itemType}s</span>
+                              </div>
+                            ) : (
+                              <div className="text-xs text-gray-600">
+                                {item.units > 0 && item.extraItems > 0 ? (
+                                  <div>
+                                    <div>{item.units} {unitType}s × {item.itemsPerUnit} = {item.units * item.itemsPerUnit} {itemType}s</div>
+                                    <div>+ {item.extraItems} extra {itemType}s</div>
+                                    <div>Total: {item.totalItems} {itemType}s</div>
+                                    <div>₹{item.unitPrice.toFixed(2)}/{itemType}</div>
+                                  </div>
+                                ) : item.units > 0 ? (
+                                  <div>
+                                    <div>{item.units} {unitType}s × {item.itemsPerUnit} = {item.totalItems} {itemType}s</div>
+                                    <div>₹{item.unitPrice.toFixed(2)}/{itemType}</div>
+                                  </div>
+                                ) : (
+                                  <div>₹{item.unitPrice.toFixed(2)}/{itemType} × {item.totalItems} {itemType}s</div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center space-x-1">
+                            {!editMode && (
+                              <>
+                                <button
+                                  onClick={() => updateCartQuantity(item.medicineId, item.totalItems - 1)}
+                                  className="text-gray-500 hover:text-gray-700 p-1"
+                                >
+                                  <Minus className="h-3 w-3" />
+                                </button>
+                                <span className="text-xs w-8 text-center">{item.totalItems}</span>
+                                <button
+                                  onClick={() => updateCartQuantity(item.medicineId, item.totalItems + 1)}
+                                  className="text-gray-500 hover:text-gray-700 p-1"
+                                >
+                                  <Plus className="h-3 w-3" />
+                                </button>
+                              </>
+                            )}
+                            <span className="text-sm font-medium ml-2">₹{(item.totalPrice ?? 0).toFixed(2)}</span>
+                            <button
+                              onClick={() => removeFromCart(item.medicineId)}
+                              className="text-red-600 hover:text-red-800 p-1"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex items-center space-x-1">
-                          {!editMode && (
-                            <>
-                              <button
-                                onClick={() => updateCartQuantity(item.medicineId, item.totalTablets - 1)}
-                                className="text-gray-500 hover:text-gray-700 p-1"
-                              >
-                                <Minus className="h-3 w-3" />
-                              </button>
-                              <span className="text-xs w-8 text-center">{item.totalTablets}</span>
-                              <button
-                                onClick={() => updateCartQuantity(item.medicineId, item.totalTablets + 1)}
-                                className="text-gray-500 hover:text-gray-700 p-1"
-                              >
-                                <Plus className="h-3 w-3" />
-                              </button>
-                            </>
-                          )}
-                          <span className="text-sm font-medium ml-2">₹{(item.totalPrice ?? 0).toFixed(2)}</span>
-                          <button
-                            onClick={() => removeFromCart(item.medicineId)}
-                            className="text-red-600 hover:text-red-800 p-1"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
 
                     {cartItems.length === 0 && selectedServices.length === 0 && (
                       <p className="p-4 text-gray-500 text-center text-sm">No items in cart</p>
@@ -1430,8 +1517,10 @@ Get well soon!
                     <tbody className="divide-y divide-gray-200">
                       {currentBill.items.map((item, index) => {
                         const isService = item.medicineId.startsWith('service-') || item.medicineId === 'consultation';
-                        const cartItem = !isService ? cartItems.find(ci => ci.medicineId === item.medicineId) : null;
+                        const cartItem = !isService ? item as CartItem : null;
                         const medicine = !isService ? medicines.find(m => m.id === item.medicineId) : null;
+                        const unitType = cartItem?.unitType || (medicine ? getUnitType(medicine) : 'unit');
+                        const itemType = cartItem?.itemType || (medicine ? getItemType(medicine) : 'item');
 
                         return (
                           <tr key={index}>
@@ -1456,18 +1545,18 @@ Get well soon!
                                 )}
                                 {!isService && cartItem && (
                                   <div className="text-xs text-blue-600">
-                                    {cartItem.strips > 0 && `${cartItem.strips} strips`}
-                                    {cartItem.strips > 0 && cartItem.extraTablets > 0 && ' + '}
-                                    {cartItem.extraTablets > 0 && `${cartItem.extraTablets} tablets`}
+                                    {cartItem.units > 0 && `${cartItem.units} ${unitType}s`}
+                                    {cartItem.units > 0 && cartItem.extraItems > 0 && ' + '}
+                                    {cartItem.extraItems > 0 && `${cartItem.extraItems} ${itemType}s`}
                                   </div>
                                 )}
                               </div>
                             </td>
                             <td className="px-4 py-2 text-sm">
-                              {isService ? item.quantity : `${item.quantity} tabs`}
+                              {isService ? item.quantity : `${item.quantity} ${itemType}s`}
                             </td>
                             <td className="px-4 py-2 text-sm">
-                              ₹{item.unitPrice.toFixed(2)}{!isService && '/tab'}
+                              ₹{item.unitPrice.toFixed(2)}{!isService && `/${itemType}`}
                             </td>
                             <td className="px-4 py-2 text-sm font-medium">₹{item.totalPrice.toFixed(2)}</td>
                           </tr>
@@ -1547,6 +1636,63 @@ Get well soon!
                 <span className="text-sm">{smsStatus.message}</span>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {showDeleteConfirm && saleToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+            <div className="flex items-center space-x-3 mb-4">
+              <div className="flex-shrink-0">
+                <AlertCircle className="h-6 w-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Delete Bill</h3>
+              </div>
+            </div>
+
+            <div className="mb-6">
+              <p className="text-sm text-gray-600 mb-3">
+                Are you sure you want to delete this bill? This action cannot be undone.
+              </p>
+              <div className="bg-gray-50 rounded-lg p-3 space-y-1 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Bill No:</span>
+                  <span className="font-medium">{saleToDelete.id}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Patient:</span>
+                  <span className="font-medium">{saleToDelete.customerName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Amount:</span>
+                  <span className="font-medium text-green-600">₹{saleToDelete.finalAmount.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Date:</span>
+                  <span className="font-medium">{new Date(saleToDelete.createdAt).toLocaleDateString()}</span>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-3">
+                Note: Medicine stock will be restored automatically.
+              </p>
+            </div>
+
+            <div className="flex space-x-3">
+              <button
+                onClick={cancelDelete}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium"
+              >
+                Delete Bill
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1633,6 +1779,13 @@ Get well soon!
                           <Edit2 className="h-3 w-3" />
                           <span>Edit</span>
                         </button>
+                        {/* <button
+                          onClick={() => handleDeleteSale(sale)}
+                          className="text-red-600 hover:text-red-900 flex items-center space-x-1 text-sm"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          <span>Delete</span>
+                        </button> */}
                       </div>
                     </td>
                   </tr>

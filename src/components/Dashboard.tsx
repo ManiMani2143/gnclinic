@@ -1,14 +1,17 @@
-import React from 'react';
-import { 
-  Package, 
-  Users, 
-  ShoppingCart, 
+import React, { useState, useEffect } from 'react';
+import {
+  Package,
+  Users,
+  ShoppingCart,
   AlertTriangle,
   Calendar,
   FileText,
   BarChart3,
   RefreshCw,
-  Truck
+  Truck,
+  TrendingUp,
+  DollarSign,
+  Box
 } from 'lucide-react';
 import { Medicine, Customer, Sale, Notification, Purchase } from '../types';
 
@@ -23,7 +26,6 @@ interface DashboardProps {
   onRefresh?: () => void;
 }
 
-// Excel Export Utilities
 const downloadLowStockReport = (medicines: Medicine[]) => {
   const lowStockMedicines = medicines.filter(m => m.quantity <= m.minStockLevel);
   exportToExcel(lowStockMedicines, 'low-stock-report', 'Low Stock Report');
@@ -47,26 +49,25 @@ const downloadCombinedStockReport = (medicines: Medicine[]) => {
   exportToExcel(medicines, 'combined-stock-report', 'Combined Stock Report');
 };
 
-// Enhanced Patient Report Function
 const downloadPatientReport = (sales: Sale[], customers: Customer[], medicines: Medicine[], settings: any) => {
   const patientReportData: any[] = [];
   let serialNumber = 1;
 
   sales.forEach(sale => {
     const customer = customers.find(c => c.id === sale.customerId);
-    
-    const medicineItems = sale.items.filter(item => 
+
+    const medicineItems = sale.items.filter(item =>
       !item.medicineId.startsWith('service-') && item.medicineId !== 'consultation'
     );
-    
+
     medicineItems.forEach(item => {
       const medicine = medicines.find(m => m.id === item.medicineId);
-      
+
       patientReportData.push({
         'Sl No': serialNumber++,
         'Bill No': sale.id.substring(0, 8),
         'Bill Date': new Date(sale.createdAt).toLocaleDateString('en-IN'),
-        'Doctor Name': settings?.doctorName || 'Dr. [Name]',
+        'Doctor Name': 'Dr.C.Naveen Kumar',
         'Patient Name': sale.customerName,
         'Medicine Name': item.medicineName,
         'Quantity': item.quantity,
@@ -82,10 +83,9 @@ const downloadPatientReport = (sales: Sale[], customers: Customer[], medicines: 
   exportToExcel(patientReportData, 'patient-report', 'Patient Report');
 };
 
-// Enhanced Purchase Report Function
 const downloadPurchaseReport = (purchases: Purchase[], medicines: Medicine[]) => {
   console.log('Generating purchase report with data:', purchases.length, 'purchases');
-  
+
   if (purchases.length === 0) {
     alert('No purchase data available for export. Add medicines to generate purchase records.');
     return;
@@ -97,7 +97,7 @@ const downloadPurchaseReport = (purchases: Purchase[], medicines: Medicine[]) =>
   purchases.forEach(purchase => {
     purchase.items.forEach(item => {
       const medicine = medicines.find(m => m.id === item.medicineId);
-      
+
       purchaseReportData.push({
         'Sl No': serialNumber++,
         'Purchase ID': purchase.id.substring(0, 8),
@@ -118,7 +118,6 @@ const downloadPurchaseReport = (purchases: Purchase[], medicines: Medicine[]) =>
     });
   });
 
-  // Sort by purchase date (most recent first)
   purchaseReportData.sort((a, b) => new Date(b['Purchase Date']).getTime() - new Date(a['Purchase Date']).getTime());
   exportToExcel(purchaseReportData, 'purchase-report', 'Purchase Report');
 };
@@ -130,7 +129,7 @@ const exportToExcel = (data: any[], filename: string, title: string) => {
   }
 
   const headers = Object.keys(data[0]).join(',');
-  const rows = data.map(item => 
+  const rows = data.map(item =>
     Object.values(item).map(value => {
       const stringValue = String(value || '');
       if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
@@ -141,49 +140,145 @@ const exportToExcel = (data: any[], filename: string, title: string) => {
   ).join('\n');
 
   const csvContent = `${headers}\n${rows}`;
-  
+
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement('a');
   const url = URL.createObjectURL(blob);
-  
+
   link.setAttribute('href', url);
   link.setAttribute('download', `${filename}-${new Date().toISOString().split('T')[0]}.csv`);
   link.style.visibility = 'hidden';
-  
+
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  
+
   setTimeout(() => {
     alert(`${title} has been downloaded successfully!`);
   }, 100);
 };
 
-export const Dashboard: React.FC<DashboardProps> = ({ 
-  medicines, 
-  customers, 
-  sales, 
+export const Dashboard: React.FC<DashboardProps> = ({
+  medicines,
+  customers,
+  sales,
   purchases = [],
   notifications,
-  settings = {},
+  settings: propSettings,
   onSectionChange,
   onRefresh
 }) => {
+  const [settings, setSettings] = useState<any>(propSettings || {});
+
+  useEffect(() => {
+    const loadSettings = () => {
+      try {
+        const possibleKeys = ['pharmacySettings', 'settings', 'pharmacy_settings'];
+        let foundSettings = null;
+
+        for (const key of possibleKeys) {
+          const stored = localStorage.getItem(key);
+          if (stored) {
+            try {
+              const parsed = JSON.parse(stored);
+              if (parsed && (parsed.doctorName || parsed.doctor_name)) {
+                foundSettings = {
+                  ...parsed,
+                  doctorName: parsed.doctorName || parsed.doctor_name
+                };
+                console.log(`Settings loaded from localStorage key "${key}":`, foundSettings);
+                break;
+              }
+            } catch (e) {
+              console.error(`Error parsing settings from key "${key}":`, e);
+            }
+          }
+        }
+
+        if (foundSettings) {
+          setSettings(foundSettings);
+        } else if (propSettings && Object.keys(propSettings).length > 0) {
+          setSettings(propSettings);
+          console.log('Settings loaded from props:', propSettings);
+        } else {
+          const defaultSettings = {
+            doctorName: 'Dr.C.Naveen Kumar',
+            pharmacyName: 'Pharmacy'
+          };
+          setSettings(defaultSettings);
+          console.log('Using default settings:', defaultSettings);
+        }
+      } catch (error) {
+        console.error('Error loading settings:', error);
+        setSettings({
+          doctorName: 'Dr.C.Naveen Kumar'
+        });
+      }
+    };
+
+    loadSettings();
+  }, [propSettings]);
+
   const handleRefresh = () => {
+    try {
+      const possibleKeys = ['pharmacySettings', 'settings', 'pharmacy_settings'];
+      let foundSettings = null;
+
+      for (const key of possibleKeys) {
+        const stored = localStorage.getItem(key);
+        if (stored) {
+          try {
+            const parsed = JSON.parse(stored);
+            if (parsed && (parsed.doctorName || parsed.doctor_name)) {
+              foundSettings = {
+                ...parsed,
+                doctorName: parsed.doctorName || parsed.doctor_name
+              };
+              console.log(`Settings refreshed from key "${key}":`, foundSettings);
+              break;
+            }
+          } catch (e) {
+            console.error(`Error parsing settings from key "${key}":`, e);
+          }
+        }
+      }
+
+      if (foundSettings) {
+        setSettings(foundSettings);
+      } else {
+        console.log('No settings found after refresh, using default');
+        setSettings({ doctorName: 'Dr.C.Naveen Kumar' });
+      }
+    } catch (error) {
+      console.error('Error refreshing settings:', error);
+    }
+
     if (onRefresh) {
       onRefresh();
     }
   };
 
-  // Calculate statistics
   const totalMedicines = medicines.length;
   const totalPatients = customers.length;
   const totalSales = sales.length;
   const totalPurchases = purchases.length;
   const unreadNotifications = notifications.filter(n => !n.isRead).length;
-  
+
+  const totalMedicinesRemaining = medicines.reduce((sum, med) => sum + med.quantity, 0);
+
+  const totalPurchaseAmount = purchases.reduce((sum, purchase) => {
+    const purchaseTotal = purchase.items.reduce((itemSum, item) => {
+      const itemTotal = (item.quantity * (item.purchaseRate || 0));
+      const gstAmount = item.gst ? (itemTotal * item.gst) / 100 : 0;
+      return itemSum + itemTotal + gstAmount;
+    }, 0);
+    return sum + purchaseTotal;
+  }, 0);
+
+  const totalSalesAmount = sales.reduce((sum, sale) => sum + (sale.finalAmount || 0), 0);
+
   const lowStockCount = medicines.filter(m => m.quantity <= m.minStockLevel).length;
-  
+
   const expiringSoon = medicines.filter(m => {
     try {
       const expiryDate = new Date(m.expiryDate);
@@ -223,16 +318,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
       alert('No sales data available. Make some sales first to generate patient reports.');
       return;
     }
-    downloadPatientReport(sales, customers, medicines, settings);
+
+    const reportSettings = {
+      ...settings,
+      doctorName: settings?.doctorName || 'Dr.C.Naveen Kumar'
+    };
+
+    console.log('Generating patient report with settings:', reportSettings);
+    downloadPatientReport(sales, customers, medicines, reportSettings);
   };
 
-  // Enhanced Purchase Report Handler
   const handlePurchaseReportClick = () => {
     console.log('Purchase report clicked. Purchases available:', purchases.length);
     downloadPurchaseReport(purchases, medicines);
   };
 
-  // Stats cards configuration
   const stats = [
     {
       title: 'Total Medicines',
@@ -268,7 +368,45 @@ export const Dashboard: React.FC<DashboardProps> = ({
     },
   ];
 
-  // Alert cards configuration
+  const keyMetrics = [
+    {
+      title: 'Total Medicines Remaining',
+      value: totalMedicinesRemaining,
+      subtitle: 'units in stock',
+      icon: Box,
+      color: 'bg-cyan-500',
+      textColor: 'text-cyan-600',
+      bgColor: 'bg-cyan-50',
+    },
+    {
+      title: 'Total Purchase Amount',
+      value: `₹${totalPurchaseAmount.toFixed(2)}`,
+      subtitle: 'including GST',
+      icon: TrendingUp,
+      color: 'bg-orange-500',
+      textColor: 'text-orange-600',
+      bgColor: 'bg-orange-50',
+    },
+    {
+      title: 'Total Sales Count',
+      value: totalSales,
+      subtitle: 'completed transactions',
+      icon: ShoppingCart,
+      color: 'bg-emerald-500',
+      textColor: 'text-emerald-600',
+      bgColor: 'bg-emerald-50',
+    },
+    {
+      title: 'Total Sales Amount',
+      value: `₹${totalSalesAmount.toFixed(2)}`,
+      subtitle: 'including GST',
+      icon: DollarSign,
+      color: 'bg-violet-500',
+      textColor: 'text-violet-600',
+      bgColor: 'bg-violet-50',
+    },
+  ];
+
   const alerts = [
     {
       title: 'Low Stock Items',
@@ -304,7 +442,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
     },
   ];
 
-  // Enhanced Quick reports configuration
   const quickReports = [
     {
       title: 'Patient Report',
@@ -316,16 +453,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
       action: 'Generate Patient Report',
       onClick: handlePatientReportClick,
     },
-    // {
-    //   title: 'Purchase Report',
-    //   description: 'Generate purchase transactions and supplier analysis',
-    //   icon: Truck,
-    //   color: 'bg-indigo-500',
-    //   textColor: 'text-indigo-600',
-    //   bgColor: 'bg-indigo-50',
-    //   action: 'Generate Purchase Report',
-    //   onClick: handlePurchaseReportClick,
-    // },
     {
       title: 'Stock Report',
       description: 'Generate inventory and stock movement report',
@@ -338,26 +465,25 @@ export const Dashboard: React.FC<DashboardProps> = ({
     },
   ];
 
-  // Get recent sales (last 5, most recent first)
   const recentSales = [...sales]
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     .slice(0, 5);
 
-  // Get recent purchases (last 5, most recent first)
   const recentPurchases = [...purchases]
     .sort((a, b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime())
     .slice(0, 5);
 
-  // Get low stock medicines
   const lowStockMedicines = medicines
     .filter(m => m.quantity <= m.minStockLevel)
     .slice(0, 5);
 
   return (
     <div className="space-y-6 p-4">
-      {/* Header with Refresh */}
       <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-semibold text-gray-900">Dashboard Overview</h2>
+        <div>
+          <h2 className="text-2xl font-semibold text-gray-900">Dashboard Overview</h2>
+          <p className="text-sm text-gray-600 mt-1">Dr.C.Naveen Kumar</p>
+        </div>
         <button
           onClick={handleRefresh}
           className="flex items-center space-x-2 px-4 py-2 text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
@@ -367,24 +493,54 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </button>
       </div>
 
-      {/* Debug Info (can be removed in production) */}
       {purchases.length === 0 && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <div className="flex items-center">
-            <AlertTriangle className="h-5 w-5 text-yellow-600 mr-2" />
+            <AlertTriangle className="h-5 w-5 text-blue-600 mr-2" />
             <div>
-              <h4 className="text-sm font-medium text-yellow-800">No Purchase Data Available</h4>
-              <p className="text-sm text-yellow-700">Add medicines in the Medicine Management section to automatically generate purchase records.</p>
+              <h4 className="text-sm font-medium text-blue-800">No Purchase Data Available</h4>
+              <p className="text-sm text-blue-700">Add medicines in the Medicine Management section to automatically generate purchase records.</p>
             </div>
           </div>
         </div>
       )}
 
-      {/* Stats Grid */}
+      <div className="bg-white rounded-lg shadow">
+        <div className="p-6 border-b border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-900 flex items-center">
+            <BarChart3 className="h-5 w-5 mr-2" />
+            Key Business Metrics
+          </h3>
+        </div>
+        <div className="p-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {keyMetrics.map((metric, index) => (
+              <div
+                key={index}
+                className={`${metric.bgColor} rounded-lg shadow-md p-6 border-l-4 ${metric.color.replace('bg', 'border')}`}
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-600 mb-2">{metric.title}</p>
+                    <p className={`text-3xl font-bold ${metric.textColor} mb-1`}>
+                      {typeof metric.value === 'number' ? metric.value.toLocaleString() : metric.value}
+                    </p>
+                    <p className="text-xs text-gray-500">{metric.subtitle}</p>
+                  </div>
+                  <div className={`${metric.color} p-3 rounded-lg`}>
+                    <metric.icon className="h-6 w-6 text-white" />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat, index) => (
-          <div 
-            key={index} 
+          <div
+            key={index}
             className="bg-white rounded-lg shadow p-6 cursor-pointer hover:shadow-lg transition-shadow"
             onClick={stat.onClick}
           >
@@ -403,11 +559,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
         ))}
       </div>
 
-      {/* Alerts Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {alerts.map((alert, index) => (
-          <div 
-            key={index} 
+          <div
+            key={index}
             className={`${alert.bgColor} rounded-lg shadow p-6 cursor-pointer hover:shadow-lg transition-shadow border-l-4 ${alert.color.replace('text', 'border')}`}
             onClick={alert.onClick}
           >
@@ -429,7 +584,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
         ))}
       </div>
 
-      {/* Enhanced Quick Reports Section */}
       <div className="bg-white rounded-lg shadow">
         <div className="p-6 border-b border-gray-200">
           <h3 className="text-lg font-semibold text-gray-900 flex items-center">
@@ -438,7 +592,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </h3>
         </div>
         <div className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {quickReports.map((report, index) => (
               <div key={index} className={`${report.bgColor} rounded-lg p-6 border border-gray-200 hover:shadow-md transition-shadow cursor-pointer`}>
                 <div className="flex items-center mb-4">
@@ -448,7 +602,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <h4 className={`ml-3 font-medium ${report.textColor}`}>{report.title}</h4>
                 </div>
                 <p className="text-sm text-gray-600 mb-4">{report.description}</p>
-                <button 
+                <button
                   onClick={report.onClick}
                   className={`w-full px-4 py-2 ${report.color} text-white rounded-lg hover:opacity-90 transition-opacity text-sm font-medium`}
                 >
@@ -459,20 +613,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     Includes: Bill details, Patient info, Medicines, Batch numbers, Expiry dates
                   </p>
                 )}
-                {report.title === 'Purchase Report' && (
-                  <p className="text-xs text-gray-500 mt-2 text-center">
-                    Records: {purchases.length} purchases available
-                  </p>
-                )}
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      {/* Recent Activity */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Recent Sales */}
         <div className="bg-white rounded-lg shadow">
           <div className="p-6 border-b border-gray-200">
             <h3 className="text-lg font-semibold text-gray-900">Recent Sales</h3>
@@ -500,7 +647,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         </div>
 
-        {/* Recent Purchases */}
         <div className="bg-white rounded-lg shadow">
           <div className="p-6 border-b border-gray-200">
             <h3 className="text-lg font-semibold text-gray-900">Recent Purchases</h3>
@@ -531,7 +677,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         </div>
 
-        {/* Low Stock Medicines */}
         <div className="bg-white rounded-lg shadow">
           <div className="p-6 border-b border-gray-200">
             <h3 className="text-lg font-semibold text-gray-900">Low Stock Medicines</h3>
@@ -554,7 +699,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 ))}
                 {lowStockCount > 5 && (
                   <div className="mt-4 text-center">
-                    <button 
+                    <button
                       onClick={handleLowStockClick}
                       className="text-blue-600 hover:text-blue-800 text-sm font-medium"
                     >
@@ -570,7 +715,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
-      {/* Enhanced Quick Download Reports */}
       <div className="bg-white rounded-lg shadow">
         <div className="p-6 border-b border-gray-200">
           <h3 className="text-lg font-semibold text-gray-900 flex items-center">
@@ -615,7 +759,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               Combined Report ({medicines.length})
             </button>
           </div>
-          
+
           <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
             <h4 className="font-medium text-blue-900 mb-2">Report Features:</h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-blue-800">
@@ -646,6 +790,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <div className="flex justify-between">
                     <span>Total Sales:</span>
                     <span className="font-medium">{sales.length}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Doctor Name:</span>
+                    <span className="font-medium">Dr.C.Naveen Kumar</span>
                   </div>
                 </div>
               </div>
