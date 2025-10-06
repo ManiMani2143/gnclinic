@@ -42,7 +42,6 @@ export const Layout: React.FC<LayoutProps> = ({
   const adminMenuItems = [
     { id: 'medicines', label: 'Medicines', icon: Package },
     { id: 'notifications', label: 'Notifications', icon: Bell },
-    { id: 'reports', label: 'Reports', icon: BarChart3 },
     { id: 'users', label: 'User Management', icon: Shield },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
