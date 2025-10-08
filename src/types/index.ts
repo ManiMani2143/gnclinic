@@ -3,14 +3,14 @@ export interface Medicine {
   name: string;
   brand: string;
   category: string;
-  batchNumber: string;
-  expiryDate: string;
   quantity: number;
   minStockLevel: number;
-  costPrice: number;
   sellingPrice: number;
-  supplier: string;
-  createdAt: string;
+  totalSellingPrice?: number;
+  sellingPriceGst: number;
+  unitType?: string;
+  itemType?: string;
+  tabletsPerStrip?: number;
 }
 
 export interface Customer {

@@ -10,12 +10,14 @@ interface SelectedService {
 }
 
 interface CartItem extends SaleItem {
-  units: number;
-  itemsPerUnit: number;
+  strips?: number;
+  tablets?: number;
+  bottles?: number;
+  itemsPerStrip?: number;
   totalItems: number;
-  extraItems?: number;
-  unitType: string;
-  itemType?: string;
+  isTabletType: boolean;
+  displayUnit: string;
+  originalUnitType: string;
 }
 
 interface SalesManagementProps {
@@ -62,35 +64,80 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
   const [sendingSMS, setSendingSMS] = useState(false);
   const [editMode, setEditMode] = useState(false);
 
-  const [medicineInputs, setMedicineInputs] = useState<{ [key: string]: { units: string; extraItems: string } }>({});
+  const [medicineInputs, setMedicineInputs] = useState<{ [key: string]: { strips: string; tablets: string; quantity: string } }>({});
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [saleToDelete, setSaleToDelete] = useState<Sale | null>(null);
 
-  const getUnitType = (medicine: Medicine): string => {
-    if (medicine.unitType) {
-      return medicine.unitType.toLowerCase();
-    }
+  const isTabletType = (medicine: Medicine): boolean => {
+    const unitType = medicine.unitType?.toLowerCase() || '';
 
-    const tabletsPerStrip = medicine.tabletsPerStrip || 1;
-    if (tabletsPerStrip === 1) {
-      return 'unit';
-    }
-
-    return 'strip';
+    return unitType === 'tablets' || unitType === 'capsules' || unitType === 'strips';
   };
 
-  const getItemType = (medicine: Medicine): string => {
-    if (medicine.itemType) {
-      return medicine.itemType.toLowerCase();
+  const getDisplayUnit = (medicine: Medicine): string => {
+    const unitType = medicine.unitType?.toLowerCase() || '';
+
+    if (isTabletType(medicine)) {
+      return 'strip';
     }
 
+    switch(unitType) {
+      case 'bottles': return 'bottle';
+      case 'tubes': return 'tube';
+      case 'vials': return 'vial';
+      case 'ampoules': return 'ampoule';
+      case 'sachets': return 'sachet';
+      case 'syrups': return 'bottle';
+      case 'drops': return 'bottle';
+      case 'inhalers': return 'inhaler';
+      case 'creams': return 'tube';
+      case 'ointments': return 'tube';
+      case 'powders': return 'packet';
+      case 'pieces': return 'piece';
+      default: return unitType.replace(/s$/, '') || 'unit';
+    }
+  };
+
+  const getDisplayItem = (medicine: Medicine): string => {
+    const unitType = medicine.unitType?.toLowerCase() || '';
+
+    if (isTabletType(medicine)) {
+      if (unitType === 'capsules') return 'capsule';
+      return 'tablet';
+    }
+
+    return getDisplayUnit(medicine);
+  };
+
+  const calculatePriceWithGST = (basePrice: number, gstPercent: number): number => {
+    return basePrice * (1 + gstPercent / 100);
+  };
+
+  const getAvailableQuantity = (medicineId: string): number => {
+    const medicine = medicines.find(m => m.id === medicineId);
+    if (!medicine) return 0;
+
+    const cartItem = cartItems.find(item => item.medicineId === medicineId);
+    const reservedQuantity = cartItem ? cartItem.totalItems : 0;
+
+    return Math.max(0, medicine.quantity - reservedQuantity);
+  };
+
+  const getAvailableStrips = (medicineId: string): number => {
+    const availableQty = getAvailableQuantity(medicineId);
+    const medicine = medicines.find(m => m.id === medicineId);
+    if (!medicine || !isTabletType(medicine)) return 0;
     const tabletsPerStrip = medicine.tabletsPerStrip || 1;
-    if (tabletsPerStrip === 1) {
-      return 'item';
-    }
+    return Math.floor(availableQty / tabletsPerStrip);
+  };
 
-    return 'tablet';
+  const getAvailableTablets = (medicineId: string): number => {
+    const availableQty = getAvailableQuantity(medicineId);
+    const medicine = medicines.find(m => m.id === medicineId);
+    if (!medicine || !isTabletType(medicine)) return 0;
+    const tabletsPerStrip = medicine.tabletsPerStrip || 1;
+    return availableQty % tabletsPerStrip;
   };
 
   const generateBillNumber = (): string => {
@@ -107,36 +154,12 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
   };
 
   useEffect(() => {
-    const initialInputs: { [key: string]: { units: string; extraItems: string } } = {};
+    const initialInputs: { [key: string]: { strips: string; tablets: string; quantity: string } } = {};
     medicines.forEach(medicine => {
-      initialInputs[medicine.id] = { units: '', extraItems: '' };
+      initialInputs[medicine.id] = { strips: '', tablets: '', quantity: '' };
     });
     setMedicineInputs(initialInputs);
   }, [medicines]);
-
-  const getAvailableQuantity = (medicineId: string): number => {
-    const medicine = medicines.find(m => m.id === medicineId);
-    if (!medicine) return 0;
-
-    const cartItem = cartItems.find(item => item.medicineId === medicineId);
-    const reservedQuantity = cartItem ? cartItem.totalItems : 0;
-
-    return Math.max(0, medicine.quantity - reservedQuantity);
-  };
-
-  const getAvailableUnits = (medicineId: string): number => {
-    const availableQty = getAvailableQuantity(medicineId);
-    const medicine = medicines.find(m => m.id === medicineId);
-    const itemsPerUnit = medicine?.tabletsPerStrip || 1;
-    return Math.floor(availableQty / itemsPerUnit);
-  };
-
-  const getAvailableExtraItems = (medicineId: string): number => {
-    const availableQty = getAvailableQuantity(medicineId);
-    const medicine = medicines.find(m => m.id === medicineId);
-    const itemsPerUnit = medicine?.tabletsPerStrip || 1;
-    return availableQty % itemsPerUnit;
-  };
 
   const filteredSales = sales.filter(sale =>
     sale.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -242,59 +265,94 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     return selectedServices.find(s => s.service.id === serviceId);
   };
 
-  const addToCart = (medicine: Medicine, units: number, extraItems: number) => {
-    const itemsPerUnit = medicine.tabletsPerStrip || 1;
-    const totalItems = (units * itemsPerUnit) + extraItems;
+  const addToCart = (medicine: Medicine, strips: number, tablets: number, quantity: number) => {
+    const isTablet = isTabletType(medicine);
+    const tabletsPerStrip = medicine.tabletsPerStrip || 1;
+    const totalItems = isTablet ? (strips * tabletsPerStrip) + tablets : quantity;
     const availableQty = getAvailableQuantity(medicine.id);
 
     if (totalItems <= 0 || totalItems > availableQty) return;
 
     const existingItem = cartItems.find(item => item.medicineId === medicine.id);
-    const unitPricePerItem = (medicine.totalSellingPrice ?? medicine.sellingPrice) / itemsPerUnit;
-    const unitType = getUnitType(medicine);
-    const itemType = getItemType(medicine);
+
+    let unitPricePerItem = 0;
+    if (isTablet) {
+      if (medicine.unitType === 'tablets' || medicine.unitType === 'capsules') {
+        const basePrice = medicine.sellingPricePerTablet || (medicine.totalSellingPrice / tabletsPerStrip);
+        const gst = medicine.sellingPriceGst || 0;
+        unitPricePerItem = gst > 0 ? calculatePriceWithGST(basePrice, gst) : basePrice;
+      } else {
+        const totalPrice = medicine.totalSellingPrice ?? medicine.sellingPrice;
+        const gst = medicine.sellingPriceGst || 0;
+        const priceWithGst = gst > 0 ? calculatePriceWithGST(totalPrice, gst) : totalPrice;
+        unitPricePerItem = priceWithGst / tabletsPerStrip;
+      }
+    } else {
+      const basePrice = medicine.sellingPrice ?? 0;
+      const gst = medicine.sellingPriceGst || 0;
+      unitPricePerItem = gst > 0 ? calculatePriceWithGST(basePrice, gst) : basePrice;
+    }
+
+    const displayUnit = getDisplayUnit(medicine);
+    const originalUnitType = medicine.unitType || 'units';
 
     if (existingItem) {
       const newTotalItems = existingItem.totalItems + totalItems;
       if (newTotalItems > medicine.quantity) return;
 
-      const newUnits = existingItem.units + units;
-      const newExtraItems = (existingItem.extraItems || 0) + extraItems;
+      if (isTablet) {
+        const newStrips = (existingItem.strips || 0) + strips;
+        const newTablets = (existingItem.tablets || 0) + tablets;
 
-      const adjustedUnits = newUnits + Math.floor(newExtraItems / itemsPerUnit);
-      const adjustedExtraItems = newExtraItems % itemsPerUnit;
+        const adjustedStrips = newStrips + Math.floor(newTablets / tabletsPerStrip);
+        const adjustedTablets = newTablets % tabletsPerStrip;
 
-      setCartItems(cartItems.map(item =>
-        item.medicineId === medicine.id
-          ? {
-              ...item,
-              units: adjustedUnits,
-              extraItems: adjustedExtraItems,
-              totalItems: newTotalItems,
-              quantity: newTotalItems,
-              totalPrice: newTotalItems * unitPricePerItem
-            }
-          : item
-      ));
+        setCartItems(cartItems.map(item =>
+          item.medicineId === medicine.id
+            ? {
+                ...item,
+                strips: adjustedStrips,
+                tablets: adjustedTablets,
+                totalItems: newTotalItems,
+                quantity: newTotalItems,
+                totalPrice: newTotalItems * unitPricePerItem
+              }
+            : item
+        ));
+      } else {
+        setCartItems(cartItems.map(item =>
+          item.medicineId === medicine.id
+            ? {
+                ...item,
+                bottles: (item.bottles || 0) + quantity,
+                totalItems: newTotalItems,
+                quantity: newTotalItems,
+                totalPrice: newTotalItems * unitPricePerItem
+              }
+            : item
+        ));
+      }
     } else {
       setCartItems([...cartItems, {
         medicineId: medicine.id,
         medicineName: medicine.name,
         quantity: totalItems,
-        units: units,
-        itemsPerUnit: itemsPerUnit,
+        strips: isTablet ? strips : undefined,
+        tablets: isTablet ? tablets : undefined,
+        bottles: isTablet ? undefined : quantity,
+        itemsPerStrip: isTablet ? tabletsPerStrip : undefined,
         totalItems: totalItems,
-        extraItems: extraItems,
         unitPrice: unitPricePerItem,
         totalPrice: totalItems * unitPricePerItem,
-        unitType: unitType,
-        itemType: itemType,
+        isTabletType: isTablet,
+        displayUnit: displayUnit,
+        originalUnitType: originalUnitType,
       }]);
     }
 
     setMedicineInputs(prev => ({
       ...prev,
-      [medicine.id]: { units: '', extraItems: '' }
+      [medicine.id]: { strips: '', tablets: '', quantity: '' }
     }));
   };
 
@@ -311,16 +369,16 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     const medicine = medicines.find(m => m.id === medicineId);
     if (!medicine || totalItems > medicine.quantity) return;
 
-    const itemsPerUnit = medicine.tabletsPerStrip || 1;
-    const units = Math.floor(totalItems / itemsPerUnit);
-    const extraItems = totalItems % itemsPerUnit;
+    const isTablet = isTabletType(medicine);
+    const tabletsPerStrip = medicine.tabletsPerStrip || 1;
 
     setCartItems(cartItems.map(item =>
       item.medicineId === medicineId
         ? {
             ...item,
-            units,
-            extraItems,
+            strips: isTablet ? Math.floor(totalItems / tabletsPerStrip) : undefined,
+            tablets: isTablet ? totalItems % tabletsPerStrip : undefined,
+            bottles: isTablet ? undefined : totalItems,
             quantity: totalItems,
             totalItems: totalItems,
             totalPrice: totalItems * item.unitPrice
@@ -447,9 +505,9 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     setShowServiceCustomization(false);
     setCustomerReentryAlert(null);
 
-    const resetInputs: { [key: string]: { units: string; extraItems: string } } = {};
+    const resetInputs: { [key: string]: { strips: string; tablets: string; quantity: string } } = {};
     medicines.forEach(medicine => {
-      resetInputs[medicine.id] = { units: '', extraItems: '' };
+      resetInputs[medicine.id] = { strips: '', tablets: '', quantity: '' };
     });
     setMedicineInputs(resetInputs);
 
@@ -690,25 +748,32 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
           `).join('')}
           ${medicineItems.map(item => {
             const medicine = medicines.find(m => m.id === item.medicineId);
-            const totalItems = item.totalItems || item.quantity;
-            const units = item.units || 0;
-            const extraItems = item.extraItems || 0;
-            const unitType = item.unitType || (medicine ? getUnitType(medicine) : 'unit');
-            const itemType = medicine ? getItemType(medicine) : 'item';
+            const isTablet = item.isTabletType !== undefined ? item.isTabletType : (medicine ? isTabletType(medicine) : false);
+            const displayItem = medicine ? getDisplayItem(medicine) : 'unit';
+            const displayUnit = item.displayUnit || (medicine ? getDisplayUnit(medicine) : 'unit');
 
-            let quantityDisplay = `${totalItems} ${itemType}s`;
+            let quantityDisplay = '';
 
-            if (units > 0 && extraItems > 0) {
-              quantityDisplay = `${units} ${unitType}s + ${extraItems} ${itemType}s`;
-            } else if (units > 0) {
-              quantityDisplay = `${units} ${unitType}s`;
+            if (isTablet) {
+              const strips = item.strips || 0;
+              const tablets = item.tablets || 0;
+              if (strips > 0 && tablets > 0) {
+                quantityDisplay = `${strips} strips + ${tablets} ${displayItem}s`;
+              } else if (strips > 0) {
+                quantityDisplay = `${strips} strips`;
+              } else {
+                quantityDisplay = `${tablets} ${displayItem}s`;
+              }
+            } else {
+              const bottles = item.bottles || item.quantity;
+              quantityDisplay = `${bottles} ${displayUnit}${bottles !== 1 ? 's' : ''}`;
             }
 
             return `
             <tr>
               <td>${item.medicineName}</td>
               <td>${quantityDisplay}</td>
-              <td>₹${item.unitPrice.toFixed(2)}/${itemType}</td>
+              <td>₹${item.unitPrice.toFixed(2)}/${isTablet ? displayItem : displayUnit}</td>
               <td>₹${item.totalPrice.toFixed(2)}</td>
             </tr>
           `}).join('')}
@@ -745,28 +810,6 @@ export const SalesManagement: React.FC<SalesManagementProps> = ({
     const customer = customers.find(c => c.id === sale.customerId);
     const medicineItems = sale.items.filter(item => !item.medicineId.startsWith('service-') && item.medicineId !== 'consultation') as CartItem[];
     const serviceItems = sale.items.filter(item => item.medicineId.startsWith('service-') || item.medicineId === 'consultation');
-
-    let totalBaseAmount = 0;
-    let totalGstAmount = 0;
-
-    medicineItems.forEach(item => {
-      const medicine = medicines.find(m => m.id === item.medicineId);
-      if (medicine && medicine.sellingPriceGst > 0) {
-        const basePrice = medicine.sellingPrice ?? 0;
-        const gstAmount = (basePrice * medicine.sellingPriceGst) / 100;
-        const basePricePerItem = basePrice / (medicine.tabletsPerStrip || 1);
-        const gstAmountPerItem = gstAmount / (medicine.tabletsPerStrip || 1);
-        const totalItems = item.totalItems || item.quantity;
-        totalBaseAmount += basePricePerItem * totalItems;
-        totalGstAmount += gstAmountPerItem * totalItems;
-      } else {
-        totalBaseAmount += item.totalPrice;
-      }
-    });
-
-    serviceItems.forEach(item => {
-      totalBaseAmount += item.totalPrice;
-    });
 
     return `
 =====================================
@@ -810,39 +853,41 @@ MEDICINES:
 ${medicineItems.map((item, index) =>
   {
     const medicine = medicines.find(m => m.id === item.medicineId);
-    const totalItems = item.totalItems || item.quantity;
-    const units = item.units || 0;
-    const extraItems = item.extraItems || 0;
-    const unitType = item.unitType || (medicine ? getUnitType(medicine) : 'unit');
-    const itemType = medicine ? getItemType(medicine) : 'item';
+    const isTablet = item.isTabletType !== undefined ? item.isTabletType : (medicine ? isTabletType(medicine) : false);
+    const displayItem = medicine ? getDisplayItem(medicine) : 'unit';
+    const displayUnit = item.displayUnit || (medicine ? getDisplayUnit(medicine) : 'unit');
 
     let itemDetails = `${index + 1}. ${item.medicineName}`;
 
-    if (units > 0 && extraItems > 0) {
+    if (isTablet) {
+      const strips = item.strips || 0;
+      const tablets = item.tablets || 0;
+      const tabletsPerStrip = item.itemsPerStrip || medicine?.tabletsPerStrip || 1;
+
+      if (strips > 0 && tablets > 0) {
+        itemDetails += `
+   ${strips} strips × ${tabletsPerStrip} ${displayItem}s = ${strips * tabletsPerStrip} ${displayItem}s
+   + ${tablets} extra ${displayItem}s
+   Total: ${item.totalItems} ${displayItem}s`;
+      } else if (strips > 0) {
+        itemDetails += `
+   ${strips} strips × ${tabletsPerStrip} ${displayItem}s = ${item.totalItems} ${displayItem}s`;
+      } else {
+        itemDetails += `
+   ${tablets} ${displayItem}s`;
+      }
+
       itemDetails += `
-   ${units} ${unitType}s × ${item.itemsPerUnit} ${itemType}s = ${units * item.itemsPerUnit} ${itemType}s
-   + ${extraItems} extra ${itemType}s
-   Total: ${totalItems} ${itemType}s`;
-    } else if (units > 0) {
-      itemDetails += `
-   ${units} ${unitType}s × ${item.itemsPerUnit} ${itemType}s = ${totalItems} ${itemType}s`;
+   Rate: ₹${item.unitPrice.toFixed(2)} per ${displayItem} (incl. GST)`;
     } else {
+      const bottles = item.bottles || item.quantity;
       itemDetails += `
-   ${totalItems} ${itemType}s`;
+   ${bottles} ${displayUnit}${bottles !== 1 ? 's' : ''}
+   Rate: ₹${item.unitPrice.toFixed(2)} per ${displayUnit} (incl. GST)`;
     }
 
     itemDetails += `
-   Rate: ₹${item.unitPrice.toFixed(2)} per ${itemType}
    Total: ₹${item.totalPrice.toFixed(2)}`;
-
-    if (medicine && medicine.sellingPriceGst > 0) {
-      const basePrice = medicine.sellingPrice ?? 0;
-      const gstAmount = (basePrice * medicine.sellingPriceGst) / 100;
-      const basePricePerItem = basePrice / (medicine.tabletsPerStrip || 1);
-      const gstAmountPerItem = gstAmount / (medicine.tabletsPerStrip || 1);
-      itemDetails += `
-   (Base: ₹${basePricePerItem.toFixed(2)}/${itemType} + GST ${medicine.sellingPriceGst}%: ₹${gstAmountPerItem.toFixed(2)}/${itemType})`;
-    }
 
     return itemDetails;
   }
@@ -854,7 +899,6 @@ BILLING SUMMARY:
 
 ${servicesTotal > 0 ? `Services Total:   ₹${servicesTotal.toFixed(2)}` : ''}
 ${medicinesTotal > 0 ? `Medicines Total:  ₹${medicinesTotal.toFixed(2)}` : ''}
-${totalGstAmount > 0 ? `GST Amount:       ₹${totalGstAmount.toFixed(2)}` : ''}
 Subtotal:         ₹${sale.totalAmount.toFixed(2)}
 Discount:         ₹${sale.discount.toFixed(2)}
 Total Amount:     ₹${sale.finalAmount.toFixed(2)}
@@ -868,7 +912,7 @@ Get well soon!
     `;
   };
 
-  const updateMedicineInput = (medicineId: string, field: 'units' | 'extraItems', value: string) => {
+  const updateMedicineInput = (medicineId: string, field: 'strips' | 'tablets' | 'quantity', value: string) => {
     setMedicineInputs(prev => ({
       ...prev,
       [medicineId]: {
@@ -1101,13 +1145,33 @@ Get well soon!
                     {filteredMedicines.filter(m => getAvailableQuantity(m.id) > 0).map(medicine => {
                       const availableQty = getAvailableQuantity(medicine.id);
                       const cartItem = cartItems.find(item => item.medicineId === medicine.id);
-                      const itemsPerUnit = medicine.tabletsPerStrip || 1;
-                      const pricePerItem = (medicine.totalSellingPrice ?? medicine.sellingPrice) / itemsPerUnit;
-                      const availableUnits = getAvailableUnits(medicine.id);
-                      const availableExtraItems = getAvailableExtraItems(medicine.id);
-                      const currentInput = medicineInputs[medicine.id] || { units: '', extraItems: '' };
-                      const unitType = getUnitType(medicine);
-                      const itemType = getItemType(medicine);
+                      const isTablet = isTabletType(medicine);
+                      const tabletsPerStrip = medicine.tabletsPerStrip || 1;
+
+                      let pricePerItem = 0;
+                      if (isTablet) {
+                        if (medicine.unitType === 'tablets' || medicine.unitType === 'capsules') {
+                          const basePrice = medicine.sellingPricePerTablet || (medicine.totalSellingPrice / tabletsPerStrip);
+                          const gst = medicine.sellingPriceGst || 0;
+                          pricePerItem = gst > 0 ? calculatePriceWithGST(basePrice, gst) : basePrice;
+                        } else {
+                          const totalPrice = medicine.totalSellingPrice ?? medicine.sellingPrice;
+                          const gst = medicine.sellingPriceGst || 0;
+                          const priceWithGst = gst > 0 ? calculatePriceWithGST(totalPrice, gst) : totalPrice;
+                          pricePerItem = priceWithGst / tabletsPerStrip;
+                        }
+                      } else {
+                        const basePrice = medicine.sellingPrice ?? 0;
+                        const gst = medicine.sellingPriceGst || 0;
+                        pricePerItem = gst > 0 ? calculatePriceWithGST(basePrice, gst) : basePrice;
+                      }
+
+                      const availableStrips = getAvailableStrips(medicine.id);
+                      const availableTablets = getAvailableTablets(medicine.id);
+                      const currentInput = medicineInputs[medicine.id] || { strips: '', tablets: '', quantity: '' };
+                      const displayUnit = getDisplayUnit(medicine);
+                      const displayItem = getDisplayItem(medicine);
+                      const originalUnitType = medicine.unitType || 'units';
 
                       return (
                         <div key={medicine.id} className="p-3 border-b border-gray-200 hover:bg-gray-50">
@@ -1117,25 +1181,36 @@ Get well soon!
                               <p className="text-xs text-gray-600">{medicine.brand}</p>
                               <div className="flex items-center space-x-2 text-xs text-gray-500 mt-1">
                                 <Package className="h-3 w-3" />
-                                <span>{itemsPerUnit} {itemType}s/{unitType}</span>
+                                <span>Unit: {originalUnitType}</span>
+                                {isTablet && medicine.tabletsPerStrip && (
+                                  <span>• {medicine.tabletsPerStrip} {displayItem}s/strip</span>
+                                )}
                               </div>
                               {cartItem && (
                                 <p className="text-xs text-blue-600 font-medium">
-                                  In cart: {cartItem.totalItems} {itemType}s
-                                  {cartItem.units > 0 && ` (${cartItem.units} ${unitType}s`}
-                                  {cartItem.extraItems > 0 && ` + ${cartItem.extraItems} ${itemType}s)`}
-                                  {cartItem.units > 0 && cartItem.extraItems === 0 && ')'}
+                                  In cart: {isTablet ? (
+                                    <>
+                                      {cartItem.strips || 0} strips
+                                      {(cartItem.tablets || 0) > 0 && ` + ${cartItem.tablets} ${displayItem}s`}
+                                    </>
+                                  ) : (
+                                    `${cartItem.bottles || 0} ${displayUnit}${(cartItem.bottles || 0) !== 1 ? 's' : ''}`
+                                  )}
                                 </p>
                               )}
                             </div>
                             <div className="text-right">
-                              <span className="text-sm font-bold text-green-600">₹{pricePerItem.toFixed(2)}/{itemType}</span>
-                              <div className="text-xs text-gray-500">
-                                {unitType}: ₹{(medicine.totalSellingPrice ?? medicine.sellingPrice ?? 0).toFixed(2)}
-                              </div>
-                              {medicine.sellingPriceGst > 0 && (
+                              <span className="text-sm font-bold text-green-600">
+                                ₹{pricePerItem.toFixed(2)}/{isTablet ? displayItem : displayUnit}
+                              </span>
+                              {isTablet && medicine.totalSellingPrice && (
                                 <div className="text-xs text-gray-500">
-                                  Base: ₹{((medicine.sellingPrice ?? 0) / itemsPerUnit).toFixed(2)}/{itemType} + GST({medicine.sellingPriceGst}%)
+                                  Strip: ₹{(medicine.sellingPriceGst > 0 ? calculatePriceWithGST(medicine.totalSellingPrice, medicine.sellingPriceGst) : medicine.totalSellingPrice).toFixed(2)}
+                                </div>
+                              )}
+                              {medicine.sellingPriceGst > 0 && (
+                                <div className="text-xs text-blue-600">
+                                  (incl. GST {medicine.sellingPriceGst}%)
                                 </div>
                               )}
                               <div className="space-y-1">
@@ -1144,57 +1219,96 @@ Get well soon!
                                     ? 'bg-orange-100 text-orange-800'
                                     : 'bg-green-100 text-green-800'
                                 }`}>
-                                  Available: {availableUnits} {unitType}s + {availableExtraItems} {itemType}s
+                                  {isTablet
+                                    ? `Available: ${availableStrips} strips + ${availableTablets} ${displayItem}s`
+                                    : `Available: ${availableQty} ${displayUnit}${availableQty !== 1 ? 's' : ''}`
+                                  }
                                 </div>
                               </div>
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-3 gap-2 items-end">
-                            <div>
-                              <label className="text-xs text-gray-500 capitalize">{unitType}s</label>
-                              <input
-                                type="number"
-                                min="0"
-                                max={availableUnits}
-                                value={currentInput.units}
-                                onChange={(e) => updateMedicineInput(medicine.id, 'units', e.target.value)}
-                                placeholder="0"
-                                className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
-                              />
-                            </div>
-                            <div>
-                              <label className="text-xs text-gray-500 capitalize">Extra {itemType}s</label>
-                              <input
-                                type="number"
-                                min="0"
-                                max={availableExtraItems}
-                                value={currentInput.extraItems}
-                                onChange={(e) => updateMedicineInput(medicine.id, 'extraItems', e.target.value)}
-                                placeholder="0"
-                                className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
-                              />
-                            </div>
-                            <button
-                              onClick={() => {
-                                const units = parseInt(currentInput.units) || 0;
-                                const extraItems = parseInt(currentInput.extraItems) || 0;
-                                const totalItems = (units * itemsPerUnit) + extraItems;
+                          {isTablet ? (
+                            <>
+                              <div className="grid grid-cols-3 gap-2 items-end">
+                                <div>
+                                  <label className="text-xs text-gray-500">Strips</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max={availableStrips}
+                                    value={currentInput.strips}
+                                    onChange={(e) => updateMedicineInput(medicine.id, 'strips', e.target.value)}
+                                    placeholder="0"
+                                    className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-xs text-gray-500 capitalize">Extra {displayItem}s</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max={availableTablets}
+                                    value={currentInput.tablets}
+                                    onChange={(e) => updateMedicineInput(medicine.id, 'tablets', e.target.value)}
+                                    placeholder="0"
+                                    className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+                                  />
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    const strips = parseInt(currentInput.strips) || 0;
+                                    const tablets = parseInt(currentInput.tablets) || 0;
+                                    const totalItems = (strips * tabletsPerStrip) + tablets;
 
-                                if (totalItems > 0 && totalItems <= availableQty) {
-                                  addToCart(medicine, units, extraItems);
-                                }
-                              }}
-                              disabled={availableQty === 0}
-                              className="px-3 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 disabled:opacity-50"
-                            >
-                              Add
-                            </button>
-                          </div>
+                                    if (totalItems > 0 && totalItems <= availableQty) {
+                                      addToCart(medicine, strips, tablets, 0);
+                                    }
+                                  }}
+                                  disabled={availableQty === 0}
+                                  className="px-3 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                  Add
+                                </button>
+                              </div>
 
-                          <div className="mt-2 text-xs text-gray-500">
-                            Max: {availableUnits} {unitType}s + {availableExtraItems} {itemType}s = {availableQty} total {itemType}s
-                          </div>
+                              <div className="mt-2 text-xs text-gray-500">
+                                Max: {availableStrips} strips + {availableTablets} {displayItem}s = {availableQty} total {displayItem}s
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="grid grid-cols-2 gap-2 items-end">
+                                <div>
+                                  <label className="text-xs text-gray-500 capitalize">{displayUnit}s</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max={availableQty}
+                                    value={currentInput.quantity}
+                                    onChange={(e) => updateMedicineInput(medicine.id, 'quantity', e.target.value)}
+                                    placeholder="0"
+                                    className="w-full px-2 py-1 border border-gray-300 rounded text-xs"
+                                  />
+                                </div>
+                                <button
+                                  onClick={() => {
+                                    const quantity = parseInt(currentInput.quantity) || 0;
+                                    if (quantity > 0 && quantity <= availableQty) {
+                                      addToCart(medicine, 0, 0, quantity);
+                                    }
+                                  }}
+                                  disabled={availableQty === 0}
+                                  className="px-3 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                  Add
+                                </button>
+                              </div>
+                              <div className="mt-2 text-xs text-gray-500">
+                                Max: {availableQty} {displayUnit}{availableQty !== 1 ? 's' : ''}
+                              </div>
+                            </>
+                          )}
                         </div>
                       );
                     })}
@@ -1272,8 +1386,9 @@ Get well soon!
 
                     {cartItems.map(item => {
                       const medicine = medicines.find(m => m.id === item.medicineId);
-                      const unitType = item.unitType || (medicine ? getUnitType(medicine) : 'unit');
-                      const itemType = item.itemType || (medicine ? getItemType(medicine) : 'item');
+                      const isTablet = item.isTabletType;
+                      const displayItem = medicine ? getDisplayItem(medicine) : 'unit';
+                      const displayUnit = item.displayUnit || 'unit';
 
                       return (
                         <div key={item.medicineId} className="p-2 border-b border-gray-200 flex justify-between items-center">
@@ -1299,24 +1414,24 @@ Get well soon!
                                   onChange={(e) => updateCartQuantity(item.medicineId, parseInt(e.target.value) || 1)}
                                   className="w-10 px-1 py-0.5 border border-gray-300 rounded text-xs text-center"
                                 />
-                                <span className="text-xs">{itemType}s</span>
+                                <span className="text-xs">{isTablet ? displayItem : displayUnit}s</span>
                               </div>
                             ) : (
                               <div className="text-xs text-gray-600">
-                                {item.units > 0 && item.extraItems > 0 ? (
+                                {isTablet ? (
                                   <div>
-                                    <div>{item.units} {unitType}s × {item.itemsPerUnit} = {item.units * item.itemsPerUnit} {itemType}s</div>
-                                    <div>+ {item.extraItems} extra {itemType}s</div>
-                                    <div>Total: {item.totalItems} {itemType}s</div>
-                                    <div>₹{item.unitPrice.toFixed(2)}/{itemType}</div>
-                                  </div>
-                                ) : item.units > 0 ? (
-                                  <div>
-                                    <div>{item.units} {unitType}s × {item.itemsPerUnit} = {item.totalItems} {itemType}s</div>
-                                    <div>₹{item.unitPrice.toFixed(2)}/{itemType}</div>
+                                    <div>
+                                      {(item.strips || 0) > 0 && `${item.strips} strips`}
+                                      {(item.strips || 0) > 0 && (item.tablets || 0) > 0 && ' + '}
+                                      {(item.tablets || 0) > 0 && `${item.tablets} ${displayItem}s`}
+                                    </div>
+                                    <div>₹{item.unitPrice.toFixed(2)}/{displayItem}</div>
                                   </div>
                                 ) : (
-                                  <div>₹{item.unitPrice.toFixed(2)}/{itemType} × {item.totalItems} {itemType}s</div>
+                                  <div>
+                                    <div>{item.bottles} {displayUnit}{(item.bottles || 0) !== 1 ? 's' : ''}</div>
+                                    <div>₹{item.unitPrice.toFixed(2)}/{displayUnit}</div>
+                                  </div>
                                 )}
                               </div>
                             )}
@@ -1519,8 +1634,9 @@ Get well soon!
                         const isService = item.medicineId.startsWith('service-') || item.medicineId === 'consultation';
                         const cartItem = !isService ? item as CartItem : null;
                         const medicine = !isService ? medicines.find(m => m.id === item.medicineId) : null;
-                        const unitType = cartItem?.unitType || (medicine ? getUnitType(medicine) : 'unit');
-                        const itemType = cartItem?.itemType || (medicine ? getItemType(medicine) : 'item');
+                        const isTablet = cartItem?.isTabletType !== undefined ? cartItem.isTabletType : (medicine ? isTabletType(medicine) : false);
+                        const displayItem = medicine ? getDisplayItem(medicine) : 'unit';
+                        const displayUnit = cartItem?.displayUnit || (medicine ? getDisplayUnit(medicine) : 'unit');
 
                         return (
                           <tr key={index}>
@@ -1545,18 +1661,24 @@ Get well soon!
                                 )}
                                 {!isService && cartItem && (
                                   <div className="text-xs text-blue-600">
-                                    {cartItem.units > 0 && `${cartItem.units} ${unitType}s`}
-                                    {cartItem.units > 0 && cartItem.extraItems > 0 && ' + '}
-                                    {cartItem.extraItems > 0 && `${cartItem.extraItems} ${itemType}s`}
+                                    {isTablet ? (
+                                      <>
+                                        {(cartItem.strips || 0) > 0 && `${cartItem.strips} strips`}
+                                        {(cartItem.strips || 0) > 0 && (cartItem.tablets || 0) > 0 && ' + '}
+                                        {(cartItem.tablets || 0) > 0 && `${cartItem.tablets} ${displayItem}s`}
+                                      </>
+                                    ) : (
+                                      `${cartItem.bottles || cartItem.quantity} ${displayUnit}${(cartItem.bottles || cartItem.quantity) !== 1 ? 's' : ''}`
+                                    )}
                                   </div>
                                 )}
                               </div>
                             </td>
                             <td className="px-4 py-2 text-sm">
-                              {isService ? item.quantity : `${item.quantity} ${itemType}s`}
+                              {isService ? item.quantity : `${item.quantity} ${isTablet ? displayItem : displayUnit}${item.quantity !== 1 ? 's' : ''}`}
                             </td>
                             <td className="px-4 py-2 text-sm">
-                              ₹{item.unitPrice.toFixed(2)}{!isService && `/${itemType}`}
+                              ₹{item.unitPrice.toFixed(2)}{!isService && `/${isTablet ? displayItem : displayUnit}`}
                             </td>
                             <td className="px-4 py-2 text-sm font-medium">₹{item.totalPrice.toFixed(2)}</td>
                           </tr>
@@ -1779,13 +1901,6 @@ Get well soon!
                           <Edit2 className="h-3 w-3" />
                           <span>Edit</span>
                         </button>
-                        {/* <button
-                          onClick={() => handleDeleteSale(sale)}
-                          className="text-red-600 hover:text-red-900 flex items-center space-x-1 text-sm"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                          <span>Delete</span>
-                        </button> */}
                       </div>
                     </td>
                   </tr>

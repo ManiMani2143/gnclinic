@@ -6,12 +6,9 @@ import {
   AlertTriangle,
   Calendar,
   FileText,
-  BarChart3,
   RefreshCw,
   Truck,
-  TrendingUp,
-  DollarSign,
-  Box
+  Archive
 } from 'lucide-react';
 import { Medicine, Customer, Sale, Notification, Purchase } from '../types';
 
@@ -47,6 +44,41 @@ const downloadExpiringReport = (medicines: Medicine[]) => {
 
 const downloadCombinedStockReport = (medicines: Medicine[]) => {
   exportToExcel(medicines, 'combined-stock-report', 'Combined Stock Report');
+};
+
+const downloadRemainingStockReport = (medicines: Medicine[]) => {
+  const remainingStockData: any[] = [];
+  let serialNumber = 1;
+
+  const medicinesWithStock = medicines.filter(m => m.quantity > 0);
+
+  medicinesWithStock.forEach(medicine => {
+    remainingStockData.push({
+      'Sl No': serialNumber++,
+      'Medicine Name': medicine.name,
+      'Brand': medicine.brand || 'N/A',
+      'Category': medicine.category || 'N/A',
+      'Batch Number': medicine.batchNumber || 'N/A',
+      'Expiry Date': new Date(medicine.expiryDate).toLocaleDateString('en-IN'),
+      'Current Stock': medicine.quantity,
+      'Min Stock Level': medicine.minStockLevel || 0,
+      'Stock Status': medicine.quantity <= medicine.minStockLevel ? 'Low Stock' : 'Normal',
+      'MRP': `₹${medicine.price?.toFixed(2) || '0.00'}`,
+      'Total Value': `₹${(medicine.quantity * (medicine.price || 0)).toFixed(2)}`,
+      'Supplier': medicine.supplier || 'N/A',
+      'Location': medicine.location || 'N/A',
+      'GST': medicine.gst ? `${medicine.gst}%` : 'N/A'
+    });
+  });
+
+  remainingStockData.sort((a, b) => b['Current Stock'] - a['Current Stock']);
+
+  if (remainingStockData.length === 0) {
+    alert('No medicines in stock. Add medicines to generate remaining stock report.');
+    return;
+  }
+
+  exportToExcel(remainingStockData, 'remaining-stock-report', 'Remaining Stock Report');
 };
 
 const downloadPatientReport = (sales: Sale[], customers: Customer[], medicines: Medicine[], settings: any) => {
@@ -261,19 +293,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const totalMedicines = medicines.length;
   const totalPatients = customers.length;
   const totalSales = sales.length;
-  const totalPurchases = purchases.length;
   const unreadNotifications = notifications.filter(n => !n.isRead).length;
 
   const totalMedicinesRemaining = medicines.reduce((sum, med) => sum + med.quantity, 0);
-
-  const totalPurchaseAmount = purchases.reduce((sum, purchase) => {
-    const purchaseTotal = purchase.items.reduce((itemSum, item) => {
-      const itemTotal = (item.quantity * (item.purchaseRate || 0));
-      const gstAmount = item.gst ? (itemTotal * item.gst) / 100 : 0;
-      return itemSum + itemTotal + gstAmount;
-    }, 0);
-    return sum + purchaseTotal;
-  }, 0);
+  const medicinesInStock = medicines.filter(m => m.quantity > 0).length;
 
   const totalSalesAmount = sales.reduce((sum, sale) => sum + (sale.finalAmount || 0), 0);
 
@@ -333,6 +356,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
     downloadPurchaseReport(purchases, medicines);
   };
 
+  const handleRemainingStockReportClick = () => {
+    console.log('Remaining stock report clicked. Medicines in stock:', medicinesInStock);
+    downloadRemainingStockReport(medicines);
+  };
+
   const stats = [
     {
       title: 'Total Medicines',
@@ -357,53 +385,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
       color: 'bg-purple-500',
       textColor: 'text-purple-600',
       onClick: () => onSectionChange('sales'),
-    },
-    {
-      title: 'Total Purchases',
-      value: totalPurchases,
-      icon: Truck,
-      color: 'bg-indigo-500',
-      textColor: 'text-indigo-600',
-      onClick: () => console.log('Purchases clicked:', purchases.length),
-    },
-  ];
-
-  const keyMetrics = [
-    {
-      title: 'Total Medicines Remaining',
-      value: totalMedicinesRemaining,
-      subtitle: 'units in stock',
-      icon: Box,
-      color: 'bg-cyan-500',
-      textColor: 'text-cyan-600',
-      bgColor: 'bg-cyan-50',
-    },
-    {
-      title: 'Total Purchase Amount',
-      value: `₹${totalPurchaseAmount.toFixed(2)}`,
-      subtitle: 'including GST',
-      icon: TrendingUp,
-      color: 'bg-orange-500',
-      textColor: 'text-orange-600',
-      bgColor: 'bg-orange-50',
-    },
-    {
-      title: 'Total Sales Count',
-      value: totalSales,
-      subtitle: 'completed transactions',
-      icon: ShoppingCart,
-      color: 'bg-emerald-500',
-      textColor: 'text-emerald-600',
-      bgColor: 'bg-emerald-50',
-    },
-    {
-      title: 'Total Sales Amount',
-      value: `₹${totalSalesAmount.toFixed(2)}`,
-      subtitle: 'including GST',
-      icon: DollarSign,
-      color: 'bg-violet-500',
-      textColor: 'text-violet-600',
-      bgColor: 'bg-violet-50',
     },
   ];
 
@@ -454,7 +435,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
       onClick: handlePatientReportClick,
     },
     {
-      title: 'Stock Report',
+      title: 'Closing Stock Report',
+      description: 'Generate detailed report of all medicines currently in stock',
+      icon: Archive,
+      color: 'bg-teal-500',
+      textColor: 'text-teal-600',
+      bgColor: 'bg-teal-50',
+      action: 'Generate Remaining Stock Report',
+      onClick: handleRemainingStockReportClick,
+    },
+    {
+      title: 'Purchase Report',
       description: 'Generate inventory and stock movement report',
       icon: Package,
       color: 'bg-purple-500',
@@ -505,39 +496,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       )}
 
-      <div className="bg-white rounded-lg shadow">
-        <div className="p-6 border-b border-gray-200">
-          <h3 className="text-lg font-semibold text-gray-900 flex items-center">
-            <BarChart3 className="h-5 w-5 mr-2" />
-            Key Business Metrics
-          </h3>
-        </div>
-        <div className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {keyMetrics.map((metric, index) => (
-              <div
-                key={index}
-                className={`${metric.bgColor} rounded-lg shadow-md p-6 border-l-4 ${metric.color.replace('bg', 'border')}`}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-gray-600 mb-2">{metric.title}</p>
-                    <p className={`text-3xl font-bold ${metric.textColor} mb-1`}>
-                      {typeof metric.value === 'number' ? metric.value.toLocaleString() : metric.value}
-                    </p>
-                    <p className="text-xs text-gray-500">{metric.subtitle}</p>
-                  </div>
-                  <div className={`${metric.color} p-3 rounded-lg`}>
-                    <metric.icon className="h-6 w-6 text-white" />
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {stats.map((stat, index) => (
           <div
             key={index}
@@ -592,7 +551,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </h3>
         </div>
         <div className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {quickReports.map((report, index) => (
               <div key={index} className={`${report.bgColor} rounded-lg p-6 border border-gray-200 hover:shadow-md transition-shadow cursor-pointer`}>
                 <div className="flex items-center mb-4">
@@ -611,6 +570,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 {report.title === 'Patient Report' && (
                   <p className="text-xs text-gray-500 mt-2 text-center">
                     Includes: Bill details, Patient info, Medicines, Batch numbers, Expiry dates
+                  </p>
+                )}
+                {report.title === 'Closing Stock Report' && (
+                  <p className="text-xs text-gray-500 mt-2 text-center">
+                    {medicinesInStock} medicines with stock available
                   </p>
                 )}
               </div>
@@ -723,7 +687,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </h3>
         </div>
         <div className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             <button
               onClick={handlePatientReportClick}
               className="flex items-center justify-center px-4 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -735,12 +699,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </button>
             <button
               onClick={handlePurchaseReportClick}
-              className="flex items-center justify-center px-4 py-3 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center justify-center px-4 py-3 bg-sky-500 text-white rounded-lg hover:bg-sky-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={purchases.length === 0}
               title={purchases.length === 0 ? 'No purchase data available. Add medicines to create purchase records.' : `Generate report for ${purchases.length} purchases`}
             >
               <Truck className="h-5 w-5 mr-2" />
               Purchase Report ({purchases.length})
+            </button>
+            <button
+              onClick={handleRemainingStockReportClick}
+              className="flex items-center justify-center px-4 py-3 bg-teal-500 text-white rounded-lg hover:bg-teal-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={medicinesInStock === 0}
+              title={medicinesInStock === 0 ? 'No medicines in stock' : `Generate report for ${medicinesInStock} medicines in stock`}
+            >
+              <Archive className="h-5 w-5 mr-2" />
+              Remaining Stock ({medicinesInStock})
             </button>
             <button
               onClick={handleLowStockClick}
@@ -764,21 +737,25 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <h4 className="font-medium text-blue-900 mb-2">Report Features:</h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-blue-800">
               <div>
-                <h5 className="font-semibold mb-1">Purchase Report Includes:</h5>
+                <h5 className="font-semibold mb-1">Remaining Stock Report Includes:</h5>
                 <div className="grid grid-cols-2 gap-1">
-                  <span>• Purchase ID</span>
-                  <span>• Purchase Date</span>
-                  <span>• Supplier Name</span>
-                  <span>• Medicine Details</span>
-                  <span>• Batch Info</span>
-                  <span>• Purchase Rate</span>
-                  <span>• MRP</span>
-                  <span>• GST Details</span>
+                  <span>• Medicine Name</span>
+                  <span>• Brand</span>
+                  <span>• Current Stock</span>
+                  <span>• Min Stock Level</span>
+                  <span>• Batch Number</span>
+                  <span>• Expiry Date</span>
+                  <span>• MRP & Total Value</span>
+                  <span>• Stock Status</span>
                 </div>
               </div>
               <div>
                 <h5 className="font-semibold mb-1">Status:</h5>
                 <div className="space-y-1">
+                  <div className="flex justify-between">
+                    <span>Medicines in Stock:</span>
+                    <span className="font-medium">{medicinesInStock}</span>
+                  </div>
                   <div className="flex justify-between">
                     <span>Total Purchases:</span>
                     <span className="font-medium">{purchases.length}</span>
